@@ -1,12 +1,14 @@
 {
   "name": "radaryum",
-  "version": "2.0.0",
+  "version": "4.0.0",
   "private": true,
-  "description": "Live industrial opportunity correlation engine on Cloudflare Workers",
+  "description": "Persistent industrial opportunity intelligence engine on Cloudflare Workers and D1",
+  "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "wrangler deploy --dry-run"
+    "check": "wrangler deploy --dry-run",
+    "db:migrate": "wrangler d1 migrations apply radaryum-db --remote"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
