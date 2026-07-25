@@ -1,31 +1,24 @@
-# Radaryum v1
+# Radaryum v2 — Correlation Engine
 
-A full-stack Cloudflare Worker that serves the website and a live industrial opportunity API from one deployment.
+This release moves Radaryum from a stream of individual articles to company-level opportunity intelligence.
 
-## Live data
-No sample opportunities are stored in this repository. `/api/opportunities` retrieves current public-source results from GDELT DOC 2.0, removes duplicate URLs/headlines, classifies signals and applies a transparent rule-based relevance score.
+## New in v2
+- Probable company extraction from current headlines
+- Company-name normalization
+- Correlation of multiple events around the same company
+- Distinct signal, source-domain and event counts
+- Company Opportunity Score
+- Company timeline
+- Separate Company Radar and Event Stream views
+- No stored demonstration opportunities
 
-## Deploy from Cloudflare Git integration
-Cloudflare is already connected to the repository:
+## Deployment
+Upload these files to the root of the existing GitHub repository, replacing the previous files. Commit to `main`. Cloudflare's Git integration should deploy automatically.
 
-1. Upload every file and folder from this project to the root of the GitHub repository.
-2. Return to the Cloudflare "Create a Worker" screen.
-3. Select the repository and click **Deploy**.
-4. Cloudflare will run `npm run deploy`.
-5. After deployment, open the generated `workers.dev` preview.
-6. Under the Worker settings, add the custom domain `radaryum.com`.
-
-## Project layout
-- `src/index.js`: Worker API, live collection, scoring, caching and scheduled refresh.
-- `public/`: website assets.
-- `wrangler.jsonc`: Cloudflare static assets and Cron configuration.
-- `package.json`: Wrangler scripts.
-
-## API
+## Endpoints
+- `/api/companies?window=3d&country=Mexico&minScore=60`
+- `/api/opportunities?window=3d&signal=expansion&minScore=55`
 - `/api/health`
-- `/api/opportunities?window=3d&signal=expansion&country=Mexico&minScore=55`
 
-Allowed windows: `24h`, `3d`, `7d`.
-
-## Accuracy boundary
-Radaryum surfaces and prioritizes public signals. It does not label a result as a confirmed RFQ unless the linked source explicitly establishes that fact. The Opportunity Score is a deterministic relevance score and not a statistical probability.
+## Important accuracy boundary
+Entity extraction is deterministic and based primarily on current headlines. A company group is a probable correlation and must be verified through the linked original sources. Scores are prioritization indicators, not statistical probabilities.
