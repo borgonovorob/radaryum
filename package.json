@@ -1,0 +1,14 @@
+{
+  "name": "radaryum",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Live industrial opportunity radar on Cloudflare Workers",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "wrangler deploy --dry-run"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

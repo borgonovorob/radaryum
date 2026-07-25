@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "radaryum",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-25",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "triggers": {
+    "crons": [
+      "17 */3 * * *"
+    ]
+  }
+}
