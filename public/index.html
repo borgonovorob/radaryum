@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#06100d">
+<title>Radaryum — Modular Industrial Opportunity Intelligence</title>
+<meta name="description" content="Radaryum correlates current industrial signals by company to identify emerging sourcing opportunities.">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar"><a class="brand" href="/">RADARYUM</a><div class="live-status"><i></i><span id="status">Connecting to live sources</span></div></header>
+<main>
+<section class="hero">
+<p class="kicker">PERSISTENT INDUSTRIAL OPPORTUNITY ENGINE</p>
+<h1>Events become<br>opportunities.</h1>
+<p class="intro">Radaryum correlates current public signals and stores what it finds. Every scan builds a growing industrial opportunity archive instead of starting over.</p>
+<div class="view-toggle"><button class="active" data-view="companies">Live company radar</button><button data-view="events">Live event stream</button><button data-view="archive">Archive</button></div>
+<div class="filters">
+<label>Country<select id="country"><option value="">All detected countries</option><option>Mexico</option><option>United States</option><option>Canada</option><option>Germany</option><option>France</option><option>Italy</option><option>Romania</option><option>Poland</option><option>United Kingdom</option><option>China</option><option>India</option></select></label>
+<label>Window<select id="window"><option value="24h">Last 24 hours</option><option value="3d" selected>Last 3 days</option><option value="7d">Last 7 days</option></select></label>
+<label>Minimum score<select id="minScore"><option value="45">45 — broad review</option><option value="60" selected>60 — relevant</option><option value="72">72 — medium+</option><option value="86">86 — high only</option></select></label>
+<label id="signalWrap" hidden>Signal<select id="signal"><option value="">All signals</option><option value="expansion">Factory expansion</option><option value="procurement">Procurement activity</option><option value="product">Product or platform launch</option><option value="supply">Supply-chain change</option></select></label>
+<button id="refresh">Refresh live</button>
+</div>
+</section>
+<section class="metrics">
+<div><strong id="count">—</strong><span id="countLabel">companies</span></div>
+<div><strong id="multi">—</strong><span>multi-signal</span></div>
+<div><strong id="sources">—</strong><span>source domains</span></div>
+<div><strong id="updated">—</strong><span>last scan</span></div>
+</section>
+<section class="feed">
+<div class="disclosure"><b>Version 4:</b> persistent D1 archive plus modular provider, entity, classification, scoring and correlation engines. Scores prioritize review; they are not probabilities or confirmed RFQs.</div>
+<div id="error" class="error" hidden></div><div id="list" class="list"><div class="loading">Correlating current industrial signals…</div></div>
+</section>
+</main>
+<footer><span class="brand">RADARYUM</span><span>Persistent company-level opportunity intelligence · v4</span></footer>
+<script src="/app.js"></script>
+</body></html>
