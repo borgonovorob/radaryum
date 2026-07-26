@@ -1,18 +1,28 @@
-Radaryum v5.8.6 — Refresh button UX fix
+Radaryum v5.8.7 — Multi-company detection correction
 
 Replace in GitHub:
-- public/app.js
+- src/engines/entity.js
 
-Why:
-The previous button waited up to 75 seconds for a new snapshot ID. When a
-refresh completed but produced unchanged content, the optimized persistence
-layer correctly skipped writing a new snapshot, so the ID did not change and
-the button appeared stuck.
+This corrects two issues in v5.8.5:
+1. The generated entity file still contained the old singular matching helpers.
+2. Single-word brands in coordinated headlines, such as Geely in
+   "Ford and Geely Reshape...", were rejected for lacking a corporate suffix.
 
-New behavior:
-- Starts the refresh normally.
-- Polls for a new snapshot for at most 30 seconds.
-- If content changes: shows "Updated".
-- If no new snapshot appears: shows "Refresh continues in background".
-- Re-enables the button instead of remaining locked for 75 seconds.
-- No D1 migration required.
+Verified detections:
+- Ford and Geely Reshape... -> Ford, Geely
+- Ford and Geely to pool... -> Ford, Geely
+- Ford and Geely join forces... -> Ford, Geely
+- Ford and Geely Form... -> Ford, Geely
+- Pearl Global Builds... -> Pearl Global
+- BeOne Medicines Plans... -> BeOne Medicines
+
+No new D1 migration is required because companies_json already exists.
+
+After deployment, trigger:
+https://radaryum.com/api/events?window=7d&minScore=0&refresh=1&t=multicompany-fix
+
+Then verify in D1:
+SELECT title, company, companies_json, last_seen_at
+FROM events
+WHERE title LIKE '%Ford%Geely%'
+ORDER BY last_seen_at DESC;

@@ -71,6 +71,7 @@ const COMPANY_ALIASES = [
   ["BMW", ["BMW"]],
   ["Volkswagen", ["Volkswagen"]],
   ["Ford", ["Ford"]],
+  ["Geely", ["Geely", "Geely Auto", "Zhejiang Geely"]],
   ["Valeo", ["Valeo"]],
   ["Forvia", ["Forvia"]],
   ["Magna", ["Magna"]],
@@ -194,8 +195,10 @@ function extractLeadingCompaniesBeforeVerb(headline) {
   const match = headline.match(pattern);
   if (match) {
     const parts = splitCompanyPhrase(match[1]);
+    const coordinated = parts.length > 1;
+
     const entities = parts
-      .map((part) => validateLeadingCandidate(part))
+      .map((part) => validateLeadingCandidate(part, coordinated ? 0.36 : 0.14, coordinated))
       .filter(Boolean);
 
     if (entities.length) return entities;
@@ -226,7 +229,7 @@ function splitCompanyPhrase(value) {
   return parts.length > 1 ? parts : [cleaned];
 }
 
-function validateLeadingCandidate(value, confidenceBonus = 0.14) {
+function validateLeadingCandidate(value, confidenceBonus = 0.14, coordinated = false) {
   const rawCandidate = clean(value)
     .replace(/^(?:the|a|an)\s+/i, "")
     .replace(/[,:;—–-]+$/, "")
@@ -245,7 +248,14 @@ function validateLeadingCandidate(value, confidenceBonus = 0.14) {
   if (!candidate) return null;
 
   const baseQuality = scoreCandidate(candidate, "explicit");
-  const confidence = Math.min(0.96, baseQuality + confidenceBonus);
+  let confidence = Math.min(0.96, baseQuality + confidenceBonus);
+
+  // In a coordinated phrase such as "Ford and Geely Reshape...",
+  // each title-cased segment is strong company evidence even when the brand
+  // is a single word and has no legal suffix.
+  if (coordinated && words.length === 1 && /^[A-Z][A-Za-z0-9&.'-]+$/.test(words[0])) {
+    confidence = Math.max(confidence, 0.88);
+  }
 
   if (confidence < 0.76) return null;
   return { name: candidate, confidence };
@@ -264,32 +274,57 @@ function startsWithBadWord(text) {
   return BAD_START_WORDS.has(first);
 }
 
-function matchConfiguredCompany(text, companies) {
+function matchAllConfiguredCompanies(text, companies) {
+  const matches = [];
+
   for (const company of companies || []) {
     const canonical = clean(company?.company || company?.name || company);
     if (!canonical || canonical.length < 2) continue;
 
-    const candidates = [canonical, ...(Array.isArray(company?.aliases) ? company.aliases : [])];
+    const candidates = [
+      canonical,
+      ...(Array.isArray(company?.aliases) ? company.aliases : [])
+    ];
+
     for (const alias of candidates) {
       const value = clean(alias);
       if (!value || value.length < 2) continue;
+
       const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const pattern = new RegExp(`(^|[^A-Za-z0-9])${escaped}(?=$|[^A-Za-z0-9])`, "i");
-      if (pattern.test(text)) return canonical;
+      const pattern = new RegExp(
+        `(^|[^A-Za-z0-9])${escaped}(?=$|[^A-Za-z0-9])`,
+        "i"
+      );
+
+      if (pattern.test(text)) {
+        matches.push(canonical);
+        break;
+      }
     }
   }
-  return null;
+
+  return matches;
 }
 
-function matchKnownCompany(text) {
+function matchAllKnownCompanies(text) {
+  const matches = [];
+
   for (const [canonical, aliases] of COMPANY_ALIASES) {
     for (const alias of aliases) {
       const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const pattern = new RegExp(`\\b${escaped}\\b`, "i");
-      if (pattern.test(text)) return canonical;
+      const pattern = new RegExp(
+        `(^|[^A-Za-z0-9])${escaped}(?=$|[^A-Za-z0-9])`,
+        "i"
+      );
+
+      if (pattern.test(text)) {
+        matches.push(canonical);
+        break;
+      }
     }
   }
-  return null;
+
+  return matches;
 }
 
 function sanitizeCompany(value) {
