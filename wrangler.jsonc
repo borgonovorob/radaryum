@@ -10,7 +10,10 @@
     "directory": "./public",
     "binding": "ASSETS",
     "run_worker_first": [
-      "/api/*"
+      "/api/*",
+      "/companies",
+      "/company/*",
+      "/sitemap.xml"
     ]
   },
   "triggers": {
@@ -19,7 +22,7 @@
     ]
   },
   "vars": {
-    "RADARYUM_VERSION": "5.8.0"
+    "RADARYUM_VERSION": "6.1.0-seo-pages"
   },
   "d1_databases": [
     {

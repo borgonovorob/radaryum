@@ -11,6 +11,7 @@ import {
 } from "./engines/persistence.js";
 import { clamp } from "./utils/text.js";
 import { authenticateRequest, authResponse } from "./auth/clerk.js";
+import { renderCompaniesIndex, renderCompanyPage, renderSitemap } from "./seo/pages.js";
 
 const CACHE_TTL_SECONDS = 300;
 const REFRESHING = new Set();
@@ -22,6 +23,19 @@ export default {
 
       if (url.pathname === "/api/health") {
         return apiJson({ ok: true, service: "radaryum", version: env.RADARYUM_VERSION || "6.0.0", authentication: "Clerk production", databaseConfigured: hasDatabase(env), time: new Date().toISOString() });
+      }
+
+      if (request.method === "GET" && url.pathname === "/companies") {
+        return renderCompaniesIndex(env);
+      }
+
+      if (request.method === "GET" && url.pathname === "/sitemap.xml") {
+        return renderSitemap(env);
+      }
+
+      if (request.method === "GET" && url.pathname.startsWith("/company/")) {
+        const slug = url.pathname.slice("/company/".length).replace(/\/+$/, "");
+        return renderCompanyPage(env, slug);
       }
 
       if (url.pathname.startsWith("/api/")) {

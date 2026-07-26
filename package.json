@@ -1,6 +1,6 @@
 {
   "name": "radaryum",
-  "version": "5.8.0",
+  "version": "6.1.0",
   "private": true,
   "description": "Accumulated industrial opportunity intelligence engine on Cloudflare Workers and D1",
   "type": "module",
