@@ -2,16 +2,20 @@ export function hasDatabase(env) {
   return Boolean(env?.DB);
 }
 
-export async function persistPipeline(env, payload, window = "3d") {
-  if (!hasDatabase(env)) return { stored: false, reason: "D1 binding DB is not configured." };
+export async function persistPipeline(env, payload, window = "7d") {
+  if (!hasDatabase(env)) {
+    return { stored: false, reason: "D1 binding DB is not configured." };
+  }
 
   const now = new Date().toISOString();
   const statements = [];
 
+  // Keep one lightweight scan record per collector cycle.
   statements.push(
     env.DB.prepare(`
       INSERT INTO scans (
-        generated_at, window, provider, elapsed_ms, event_count, company_count, multi_signal_count
+        generated_at, window, provider, elapsed_ms,
+        event_count, company_count, multi_signal_count
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `).bind(
       payload.generatedAt,
@@ -25,6 +29,9 @@ export async function persistPipeline(env, payload, window = "3d") {
   );
 
   for (const event of payload.events) {
+    const reasonsJson = JSON.stringify(event.reasons || []);
+    const secTermsJson = JSON.stringify(event.secMatchedTerms || []);
+
     statements.push(
       env.DB.prepare(`
         INSERT INTO events (
@@ -56,20 +63,60 @@ export async function persistPipeline(env, payload, window = "3d") {
           sec_matched_terms_json = excluded.sec_matched_terms_json,
           sec_evidence_snippet = excluded.sec_evidence_snippet,
           last_seen_at = excluded.last_seen_at
+        WHERE
+          events.title IS NOT excluded.title OR
+          events.url IS NOT excluded.url OR
+          events.domain IS NOT excluded.domain OR
+          events.provider IS NOT excluded.provider OR
+          events.published_at IS NOT excluded.published_at OR
+          events.signal IS NOT excluded.signal OR
+          events.signal_label IS NOT excluded.signal_label OR
+          events.country IS NOT excluded.country OR
+          events.company IS NOT excluded.company OR
+          events.company_confidence IS NOT excluded.company_confidence OR
+          events.score IS NOT excluded.score OR
+          events.confidence IS NOT excluded.confidence OR
+          events.reasons_json IS NOT excluded.reasons_json OR
+          events.suggested_action IS NOT excluded.suggested_action OR
+          events.source_language IS NOT excluded.source_language OR
+          events.source_country IS NOT excluded.source_country OR
+          events.sec_form IS NOT excluded.sec_form OR
+          events.sec_relevance_score IS NOT excluded.sec_relevance_score OR
+          events.sec_matched_terms_json IS NOT excluded.sec_matched_terms_json OR
+          events.sec_evidence_snippet IS NOT excluded.sec_evidence_snippet
       `).bind(
-        event.id, event.title, event.url, event.domain, event.provider || payload.provider,
-        event.publishedAt, event.signal, event.signalLabel, event.country, event.company,
-        event.companyConfidence || 0, event.score, event.confidence,
-        JSON.stringify(event.reasons || []), event.suggestedAction || null,
-        event.sourceLanguage || null, event.sourceCountry || null,
-        event.secForm || null, event.secRelevanceScore || null,
-        JSON.stringify(event.secMatchedTerms || []), event.secEvidenceSnippet || null,
-        now, now
+        event.id,
+        event.title,
+        event.url,
+        event.domain,
+        event.provider || payload.provider,
+        event.publishedAt,
+        event.signal,
+        event.signalLabel,
+        event.country,
+        event.company,
+        event.companyConfidence || 0,
+        event.score,
+        event.confidence,
+        reasonsJson,
+        event.suggestedAction || null,
+        event.sourceLanguage || null,
+        event.sourceCountry || null,
+        event.secForm || null,
+        event.secRelevanceScore || null,
+        secTermsJson,
+        event.secEvidenceSnippet || null,
+        now,
+        now
       )
     );
   }
 
   for (const company of payload.companies) {
+    const signalsJson = JSON.stringify(company.signals || []);
+    const countriesJson = JSON.stringify(company.countries || []);
+    const reasonsJson = JSON.stringify(company.reasons || []);
+
     statements.push(
       env.DB.prepare(`
         INSERT INTO companies (
@@ -91,12 +138,35 @@ export async function persistPipeline(env, payload, window = "3d") {
           suggested_action = excluded.suggested_action,
           latest_at = excluded.latest_at,
           last_seen_at = excluded.last_seen_at
+        WHERE
+          companies.company IS NOT excluded.company OR
+          companies.normalized_company IS NOT excluded.normalized_company OR
+          companies.score IS NOT excluded.score OR
+          companies.confidence IS NOT excluded.confidence OR
+          companies.signal_count IS NOT excluded.signal_count OR
+          companies.event_count IS NOT excluded.event_count OR
+          companies.source_count IS NOT excluded.source_count OR
+          companies.signals_json IS NOT excluded.signals_json OR
+          companies.countries_json IS NOT excluded.countries_json OR
+          companies.reasons_json IS NOT excluded.reasons_json OR
+          companies.suggested_action IS NOT excluded.suggested_action OR
+          companies.latest_at IS NOT excluded.latest_at
       `).bind(
-        company.id, company.company, company.normalizedCompany, company.score,
-        company.confidence, company.signalCount, company.eventCount, company.sourceCount,
-        JSON.stringify(company.signals || []), JSON.stringify(company.countries || []),
-        JSON.stringify(company.reasons || []), company.suggestedAction || null,
-        company.latestAt, now, now
+        company.id,
+        company.company,
+        company.normalizedCompany,
+        company.score,
+        company.confidence,
+        company.signalCount,
+        company.eventCount,
+        company.sourceCount,
+        signalsJson,
+        countriesJson,
+        reasonsJson,
+        company.suggestedAction || null,
+        company.latestAt,
+        now,
+        now
       )
     );
 
@@ -129,6 +199,16 @@ export async function saveSnapshot(env, window, payload) {
     return { stored: false, reason: "Empty snapshots are not published." };
   }
 
+  // Do not write a new snapshot when the visible content is unchanged.
+  const previous = await readLatestSnapshot(env, window);
+  if (previous && snapshotSignature(previous) === snapshotSignature(payload)) {
+    return {
+      stored: false,
+      unchanged: true,
+      snapshotId: previous.snapshotId || null
+    };
+  }
+
   const snapshotId = payload.snapshotId || crypto.randomUUID();
   const now = new Date().toISOString();
 
@@ -149,6 +229,7 @@ export async function saveSnapshot(env, window, payload) {
     JSON.stringify({ ...payload, snapshotId })
   ).run();
 
+  // Keep only the latest eight changed snapshots per window.
   await env.DB.prepare(`
     DELETE FROM snapshots
     WHERE window = ?
@@ -157,7 +238,7 @@ export async function saveSnapshot(env, window, payload) {
         FROM snapshots
         WHERE window = ?
         ORDER BY created_at DESC
-        LIMIT 20
+        LIMIT 8
       )
   `).bind(window, window).run();
 
@@ -188,6 +269,7 @@ export async function readArchive(env, options = {}) {
 
   const companyWhere = ["score >= ?"];
   const companyBindings = [minScore];
+
   if (country) {
     companyWhere.push("countries_json LIKE ?");
     companyBindings.push(`%${country}%`);
@@ -202,6 +284,7 @@ export async function readArchive(env, options = {}) {
 
   const eventWhere = ["score >= ?"];
   const eventBindings = [minScore];
+
   if (country) {
     eventWhere.push("country = ?");
     eventBindings.push(country);
@@ -245,11 +328,18 @@ export async function readStats(env) {
 }
 
 export async function saveFeedback(env, input) {
-  if (!hasDatabase(env)) return { stored: false, reason: "D1 binding DB is not configured." };
+  if (!hasDatabase(env)) {
+    return { stored: false, reason: "D1 binding DB is not configured." };
+  }
 
   const allowedTypes = new Set(["company", "event"]);
   const allowedRatings = new Set(["useful", "review", "dismiss"]);
-  if (!allowedTypes.has(input.targetType) || !allowedRatings.has(input.rating) || !input.targetId) {
+
+  if (
+    !allowedTypes.has(input.targetType) ||
+    !allowedRatings.has(input.rating) ||
+    !input.targetId
+  ) {
     throw new Error("Invalid feedback payload.");
   }
 
@@ -265,6 +355,29 @@ export async function saveFeedback(env, input) {
   ).run();
 
   return { stored: true };
+}
+
+function snapshotSignature(payload) {
+  return JSON.stringify({
+    events: (payload.events || [])
+      .map((event) => [
+        event.id,
+        event.score,
+        event.company,
+        event.signal,
+        event.publishedAt
+      ])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    companies: (payload.companies || [])
+      .map((company) => [
+        company.id,
+        company.score,
+        company.eventCount,
+        company.signalCount,
+        company.latestAt
+      ])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+  });
 }
 
 function parseCompany(row) {
