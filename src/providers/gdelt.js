@@ -1,124 +1,77 @@
 import { SIGNAL_GROUPS } from "../config/signals.js";
 
-const SIMPLE_FALLBACK_QUERIES = [
-  { id: "expansion", query: "manufacturing expansion factory investment" },
-  { id: "procurement", query: "procurement sourcing supplier manager" },
-  { id: "product", query: "new product manufacturing production launch" },
-  { id: "supply", query: "supply chain supplier shortage sourcing" }
+const REAL_FALLBACK_QUERIES = [
+  {
+    id: "expansion",
+    query: '"factory expansion" OR "new factory" OR "new plant" OR "manufacturing investment" OR "plant expansion" OR "production capacity"'
+  },
+  {
+    id: "procurement",
+    query: '"procurement manager" OR "strategic sourcing" OR "commodity manager" OR "supplier development" OR "supplier qualification" OR "new supplier"'
+  },
+  {
+    id: "product",
+    query: '"new product" OR "product launch" OR "starts production" OR "new platform" OR "production program"'
+  },
+  {
+    id: "supply",
+    query: '"supply chain" OR "supplier shortage" OR "dual sourcing" OR "supplier qualification" OR "local sourcing"'
+  },
+  {
+    id: "investment",
+    query: '"manufacturing investment" OR "industrial investment" OR "capacity investment" OR "production investment"'
+  }
 ];
 
-const DEMO_FALLBACK_ARTICLES = [
+const BROAD_REAL_QUERIES = [
   {
-    title: "ABB expands manufacturing capacity for electrification products",
-    url: "https://radaryum.com/demo/abb-expands-manufacturing-capacity",
-    domain: "radaryum.com",
-    seendate: "20260726010000",
-    requestedSignal: "expansion",
-    provider: "RADARYUM DEMO FALLBACK",
-    language: "English",
-    sourcecountry: "Switzerland"
+    id: "expansion",
+    query: 'manufacturing factory expansion investment'
   },
   {
-    title: "Siemens announces new production program for industrial automation",
-    url: "https://radaryum.com/demo/siemens-production-program",
-    domain: "radaryum.com",
-    seendate: "20260726005500",
-    requestedSignal: "product",
-    provider: "RADARYUM DEMO FALLBACK",
-    language: "English",
-    sourcecountry: "Germany"
+    id: "procurement",
+    query: 'procurement sourcing supplier manufacturing'
   },
   {
-    title: "Bosch hiring strategic sourcing manager for manufacturing operations",
-    url: "https://radaryum.com/demo/bosch-strategic-sourcing-manager",
-    domain: "radaryum.com",
-    seendate: "20260726005000",
-    requestedSignal: "procurement",
-    provider: "RADARYUM DEMO FALLBACK",
-    language: "English",
-    sourcecountry: "Germany"
+    id: "product",
+    query: 'production manufacturing product launch'
   },
   {
-    title: "Schneider Electric invests in new capacity for energy management equipment",
-    url: "https://radaryum.com/demo/schneider-electric-capacity",
-    domain: "radaryum.com",
-    seendate: "20260726004500",
-    requestedSignal: "expansion",
-    provider: "RADARYUM DEMO FALLBACK",
-    language: "English",
-    sourcecountry: "France"
-  },
-  {
-    title: "Danfoss seeks supplier development support for new manufacturing platform",
-    url: "https://radaryum.com/demo/danfoss-supplier-development",
-    domain: "radaryum.com",
-    seendate: "20260726004000",
-    requestedSignal: "procurement",
-    provider: "RADARYUM DEMO FALLBACK",
-    language: "English",
-    sourcecountry: "Denmark"
-  },
-  {
-    title: "Honeywell starts production of new automation components",
-    url: "https://radaryum.com/demo/honeywell-automation-production",
-    domain: "radaryum.com",
-    seendate: "20260726003500",
-    requestedSignal: "product",
-    provider: "RADARYUM DEMO FALLBACK",
-    language: "English",
-    sourcecountry: "United States"
-  },
-  {
-    title: "Eaton expands electrical equipment production capacity in North America",
-    url: "https://radaryum.com/demo/eaton-production-capacity",
-    domain: "radaryum.com",
-    seendate: "20260726003000",
-    requestedSignal: "expansion",
-    provider: "RADARYUM DEMO FALLBACK",
-    language: "English",
-    sourcecountry: "United States"
-  },
-  {
-    title: "Jabil adds supplier qualification roles for electronics manufacturing",
-    url: "https://radaryum.com/demo/jabil-supplier-qualification",
-    domain: "radaryum.com",
-    seendate: "20260726002500",
-    requestedSignal: "procurement",
-    provider: "RADARYUM DEMO FALLBACK",
-    language: "English",
-    sourcecountry: "United States"
+    id: "supply",
+    query: 'supply chain supplier manufacturing'
   }
 ];
 
 export async function fetchGdelt(window) {
   const normalizedWindow = normalizeTimespan(window);
 
-  let result = await collect(SIGNAL_GROUPS, normalizedWindow, "primary");
+  const attempts = [
+    { name: "primary", groups: SIGNAL_GROUPS, records: 120 },
+    { name: "real-fallback", groups: REAL_FALLBACK_QUERIES, records: 100 },
+    { name: "broad-real", groups: BROAD_REAL_QUERIES, records: 80 }
+  ];
 
-  if (result.articles.length > 0) {
-    console.log(`GDELT primary returned ${result.articles.length} articles.`);
-    return result.articles;
+  const errors = [];
+
+  for (const attempt of attempts) {
+    const result = await collect(attempt.groups, normalizedWindow, attempt.name, attempt.records);
+
+    if (result.articles.length > 0) {
+      console.log(`GDELT ${attempt.name} returned ${result.articles.length} real articles.`);
+      return result.articles;
+    }
+
+    errors.push(...result.errors);
+    console.warn(`GDELT ${attempt.name} returned zero articles.`);
   }
 
-  console.warn("GDELT primary returned zero articles. Retrying fallback.", JSON.stringify(result.errors));
-
-  result = await collect(SIMPLE_FALLBACK_QUERIES, normalizedWindow, "fallback");
-
-  if (result.articles.length > 0) {
-    console.log(`GDELT fallback returned ${result.articles.length} articles.`);
-    return result.articles;
-  }
-
-  console.error("GDELT returned zero articles. Using marked Radaryum demo fallback.", JSON.stringify(result.errors));
-  return DEMO_FALLBACK_ARTICLES.map((article) => ({
-    ...article,
-    seendate: currentGdeltDate()
-  }));
+  console.error("All real GDELT attempts returned zero articles.", JSON.stringify(errors));
+  return [];
 }
 
-async function collect(groups, window, mode) {
+async function collect(groups, window, mode, maxRecords) {
   const settled = await Promise.allSettled(
-    groups.map((group) => fetchGroup(group, window, mode))
+    groups.map((group) => fetchGroup(group, window, mode, maxRecords))
   );
 
   const articles = [];
@@ -135,11 +88,11 @@ async function collect(groups, window, mode) {
   return { articles, errors };
 }
 
-async function fetchGroup(group, window, mode) {
+async function fetchGroup(group, window, mode, maxRecords) {
   const endpoint = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
   endpoint.searchParams.set("query", group.query);
   endpoint.searchParams.set("mode", "artlist");
-  endpoint.searchParams.set("maxrecords", mode === "fallback" ? "50" : "100");
+  endpoint.searchParams.set("maxrecords", String(maxRecords));
   endpoint.searchParams.set("timespan", window);
   endpoint.searchParams.set("sort", "datedesc");
   endpoint.searchParams.set("format", "json");
@@ -147,9 +100,12 @@ async function fetchGroup(group, window, mode) {
   const response = await fetch(endpoint.toString(), {
     headers: {
       accept: "application/json",
-      "user-agent": "Radaryum/4.1e (+https://radaryum.com)"
+      "user-agent": "Radaryum/4.2-real-news-only (+https://radaryum.com)"
     },
-    cf: { cacheTtl: 30, cacheEverything: true }
+    cf: {
+      cacheTtl: 30,
+      cacheEverything: true
+    }
   });
 
   const text = await response.text();
@@ -167,11 +123,13 @@ async function fetchGroup(group, window, mode) {
 
   const articles = Array.isArray(data.articles) ? data.articles : [];
 
-  return articles.map((article) => ({
-    ...article,
-    requestedSignal: group.id,
-    provider: `GDELT DOC 2.0 ${mode}`
-  }));
+  return articles
+    .filter((article) => article?.url && article?.title)
+    .map((article) => ({
+      ...article,
+      requestedSignal: normalizeSignal(group.id),
+      provider: `GDELT DOC 2.0 ${mode}`
+    }));
 }
 
 function normalizeTimespan(value) {
@@ -181,16 +139,8 @@ function normalizeTimespan(value) {
   return "3d";
 }
 
-function currentGdeltDate() {
-  const date = new Date();
-  const pad = (value) => String(value).padStart(2, "0");
-  return [
-    date.getUTCFullYear(),
-    pad(date.getUTCMonth() + 1),
-    pad(date.getUTCDate())
-  ].join("") + "T" + [
-    pad(date.getUTCHours()),
-    pad(date.getUTCMinutes()),
-    pad(date.getUTCSeconds())
-  ].join("") + "Z";
+function normalizeSignal(value) {
+  if (value === "investment") return "expansion";
+  if (["expansion", "procurement", "product", "supply"].includes(value)) return value;
+  return "expansion";
 }
