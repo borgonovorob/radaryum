@@ -22,7 +22,11 @@ const BAD_PHRASES = [
   /\bthailand economy\b/i,
   /\bpolicy\b/i,
   /\bgovernment\b/i,
-  /\bminister\b/i
+  /\bminister\b/i,
+  /\bcentral bank\b/i,
+  /\bstock market\b/i,
+  /\btrade surplus\b/i,
+  /\binflation report\b/i
 ];
 
 const GENERIC_ACRONYMS = new Set([
@@ -39,23 +43,91 @@ const NON_COMPANY_WORDS = new Set([
   "means", "record", "surplus", "trade", "tariff", "inflation", "export", "import"
 ]);
 
-const KNOWN_COMPANIES = [
-  "ABB", "Siemens", "Bosch", "Schneider Electric", "Tesla", "Ford", "GM", "General Motors",
-  "Stellantis", "Toyota", "Honda", "Nissan", "BMW", "Mercedes-Benz", "Volkswagen",
-  "Valeo", "Forvia", "Magna", "Aptiv", "Continental", "Denso", "Yazaki", "Lear",
-  "Whirlpool", "Electrolux", "GE Appliances", "Kohler", "Moen", "Delta Faucet",
-  "Honeywell", "Emerson", "Eaton", "Rockwell Automation", "Johnson Controls",
-  "Carrier", "Trane", "Daikin", "Panasonic", "Samsung", "LG", "Foxconn",
-  "Flex", "Jabil", "Amphenol", "TE Connectivity", "Molex", "Hubbell", "Leviton",
-  "Danfoss", "Grundfos", "Xylem", "Parker Hannifin", "3M", "BASF", "SABIC",
-  "Dow", "DuPont", "Celanese", "Covestro", "Solvay", "LyondellBasell",
-  "NAVER", "Hyundai", "Kia", "SK Hynix", "TSMC", "Intel", "AMD", "Nvidia",
-  "Microsoft", "Amazon", "Google", "Meta", "Apple", "Oracle", "Salesforce"
+const COMPANY_ALIASES = [
+  ["LG Energy Solution", ["LG Energy Solution", "LGES"]],
+  ["LG Electronics", ["LG Electronics", "LGE"]],
+  ["LG Display", ["LG Display"]],
+  ["GE Appliances", ["GE Appliances", "General Electric Appliances"]],
+  ["Schneider Electric", ["Schneider Electric"]],
+  ["Rockwell Automation", ["Rockwell Automation"]],
+  ["Johnson Controls", ["Johnson Controls"]],
+  ["TE Connectivity", ["TE Connectivity"]],
+  ["Parker Hannifin", ["Parker Hannifin"]],
+  ["General Motors", ["General Motors", "GM"]],
+  ["Mercedes-Benz", ["Mercedes-Benz", "Mercedes Benz"]],
+  ["SK Hynix", ["SK Hynix"]],
+  ["Delta Faucet", ["Delta Faucet"]],
+  ["LyondellBasell", ["LyondellBasell"]],
+  ["Foxconn", ["Foxconn", "Hon Hai"]],
+  ["NAVER", ["NAVER"]],
+  ["Tesla", ["Tesla"]],
+  ["ABB", ["ABB"]],
+  ["Siemens", ["Siemens"]],
+  ["Bosch", ["Bosch"]],
+  ["Stellantis", ["Stellantis"]],
+  ["Toyota", ["Toyota"]],
+  ["Honda", ["Honda"]],
+  ["Nissan", ["Nissan"]],
+  ["BMW", ["BMW"]],
+  ["Volkswagen", ["Volkswagen"]],
+  ["Ford", ["Ford"]],
+  ["Valeo", ["Valeo"]],
+  ["Forvia", ["Forvia"]],
+  ["Magna", ["Magna"]],
+  ["Aptiv", ["Aptiv"]],
+  ["Continental", ["Continental"]],
+  ["Denso", ["Denso"]],
+  ["Yazaki", ["Yazaki"]],
+  ["Lear", ["Lear"]],
+  ["Whirlpool", ["Whirlpool"]],
+  ["Electrolux", ["Electrolux"]],
+  ["Kohler", ["Kohler"]],
+  ["Moen", ["Moen"]],
+  ["Honeywell", ["Honeywell"]],
+  ["Emerson", ["Emerson"]],
+  ["Eaton", ["Eaton"]],
+  ["Carrier", ["Carrier"]],
+  ["Trane", ["Trane"]],
+  ["Daikin", ["Daikin"]],
+  ["Panasonic", ["Panasonic"]],
+  ["Samsung", ["Samsung"]],
+  ["Flex", ["Flex"]],
+  ["Jabil", ["Jabil"]],
+  ["Amphenol", ["Amphenol"]],
+  ["Molex", ["Molex"]],
+  ["Hubbell", ["Hubbell"]],
+  ["Leviton", ["Leviton"]],
+  ["Danfoss", ["Danfoss"]],
+  ["Grundfos", ["Grundfos"]],
+  ["Xylem", ["Xylem"]],
+  ["3M", ["3M"]],
+  ["BASF", ["BASF"]],
+  ["SABIC", ["SABIC"]],
+  ["Dow", ["Dow"]],
+  ["DuPont", ["DuPont"]],
+  ["Celanese", ["Celanese"]],
+  ["Covestro", ["Covestro"]],
+  ["Solvay", ["Solvay"]],
+  ["Hyundai", ["Hyundai"]],
+  ["Kia", ["Kia"]],
+  ["TSMC", ["TSMC"]],
+  ["Intel", ["Intel"]],
+  ["AMD", ["AMD"]],
+  ["Nvidia", ["Nvidia"]],
+  ["Microsoft", ["Microsoft"]],
+  ["Amazon", ["Amazon"]],
+  ["Google", ["Google"]],
+  ["Meta", ["Meta"]],
+  ["Apple", ["Apple"]],
+  ["Oracle", ["Oracle"]],
+  ["Salesforce", ["Salesforce"]],
+  ["LG", ["LG"]]
 ];
 
 const COMPANY_VERBS = [
   "opens", "launches", "announces", "plans", "expands", "invests", "starts",
-  "seeks", "hires", "acquires", "builds", "unveils", "partners", "selects"
+  "seeks", "hires", "acquires", "builds", "unveils", "partners", "selects",
+  "adds", "increases", "relocates", "awards", "qualifies"
 ];
 
 export function extractCompany(title) {
@@ -67,11 +139,9 @@ export function extractCompany(title) {
   if (startsWithBadWord(headline)) return { name: null, confidence: 0 };
 
   const known = matchKnownCompany(original);
-  if (known) return { name: known, confidence: 0.98 };
+  if (known) return { name: known, confidence: 0.99 };
 
   const verbPattern = COMPANY_VERBS.join("|");
-
-  // Only trust first-position extraction when headline follows a strong corporate action pattern.
   const explicitPattern = new RegExp(
     `^([A-Z][A-Za-z0-9&.'\\-]*(?:\\s+[A-Z][A-Za-z0-9&.'\\-]*){0,3})\\s+(?:${verbPattern})\\b`,
     "i"
@@ -84,7 +154,6 @@ export function extractCompany(title) {
     if (quality >= 0.78) return { name: candidate, confidence: quality };
   }
 
-  // For "by/with/at/for X", require a corporate signal or known company. This avoids phrases.
   const afterPreposition = headline.match(
     /(?:by|at|for|with)\s+([A-Z][A-Za-z0-9&.'\-]*(?:\s+[A-Z][A-Za-z0-9&.'\-]*){0,3})(?:\s|$)/
   );
@@ -92,10 +161,9 @@ export function extractCompany(title) {
   if (afterPreposition) {
     const candidate = sanitizeCompany(afterPreposition[1]);
     const quality = scoreCandidate(candidate, "preposition");
-    if (quality >= 0.82) return { name: candidate, confidence: quality };
+    if (quality >= 0.84) return { name: candidate, confidence: quality };
   }
 
-  // Acronyms are accepted only if they are known companies; otherwise too many false positives.
   return { name: null, confidence: 0 };
 }
 
@@ -112,10 +180,12 @@ function startsWithBadWord(text) {
 }
 
 function matchKnownCompany(text) {
-  for (const company of KNOWN_COMPANIES) {
-    const escaped = company.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pattern = new RegExp(`\\b${escaped}\\b`, "i");
-    if (pattern.test(text)) return company;
+  for (const [canonical, aliases] of COMPANY_ALIASES) {
+    for (const alias of aliases) {
+      const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const pattern = new RegExp(`\\b${escaped}\\b`, "i");
+      if (pattern.test(text)) return canonical;
+    }
   }
   return null;
 }
@@ -148,13 +218,9 @@ function scoreCandidate(candidate, source) {
 
   if (source === "explicit") score += 0.18;
   if (source === "preposition") score += 0.10;
-
   if (hasCorporateSignal(words)) score += 0.26;
   else score -= 0.10;
-
-  // Single-word unknown names are too risky. Known companies are already handled earlier.
   if (words.length === 1) score -= 0.35;
-
   if (words.length >= 2 && words.length <= 3) score += 0.08;
   if (words.length > 3) score -= 0.16;
 
