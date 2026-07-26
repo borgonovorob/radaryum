@@ -21,7 +21,14 @@ export async function runPipeline(window, env) {
     .map(article => enrichEvent(article, configuredCompanies))
     .filter(event => event.score >= 35);
 
-  const events = mergeEvents(storedEvents, freshEvents)
+  // Re-run entity detection for archived events that were previously stored
+  // without a company. This fixes historical "Company undetected" records as
+  // the extraction engine and company catalog improve.
+  const repairedStoredEvents = storedEvents.map((event) =>
+    repairStoredCompany(event, configuredCompanies)
+  );
+
+  const events = mergeEvents(repairedStoredEvents, freshEvents)
     .filter(event => insideWindow(event.publishedAt, window))
     .sort((a,b) => b.score-a.score || Date.parse(b.publishedAt)-Date.parse(a.publishedAt))
     .slice(0, 600);
@@ -38,6 +45,33 @@ export async function runPipeline(window, env) {
     archiveMerge: { storedEvents: storedEvents.length, freshEvents: freshEvents.length, mergedEvents: events.length },
     stats: { events:events.length, companies:companies.length, multiSignalCompanies:companies.filter(c=>c.signalCount>=2).length },
     events, companies
+  };
+}
+
+function repairStoredCompany(event, configuredCompanies) {
+  if (event?.company || !event?.title) return event;
+
+  const entity = extractCompany(event.title, configuredCompanies);
+  if (!entity.name) return event;
+
+  const scoring = scoreEvent({
+    title: event.title,
+    signal: event.signal,
+    country: event.country,
+    publishedAt: event.publishedAt,
+    company: entity.name
+  });
+
+  return {
+    ...event,
+    company: entity.name,
+    companyConfidence: entity.confidence,
+    score: Math.max(event.score || 0, scoring.score),
+    confidence:
+      Math.max(event.score || 0, scoring.score) >= 82 ? "High" :
+      Math.max(event.score || 0, scoring.score) >= 67 ? "Medium" :
+      "Review",
+    reasons: scoring.reasons
   };
 }
 

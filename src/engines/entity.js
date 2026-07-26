@@ -144,18 +144,8 @@ export function extractCompany(title, dynamicCompanies = []) {
   const known = matchKnownCompany(original);
   if (known) return { name: known, confidence: 0.99 };
 
-  const verbPattern = COMPANY_VERBS.join("|");
-  const explicitPattern = new RegExp(
-    `^([A-Z][A-Za-z0-9&.'\\-]*(?:\\s+[A-Z][A-Za-z0-9&.'\\-]*){0,3})\\s+(?:${verbPattern})\\b`,
-    "i"
-  );
-
-  const explicit = headline.match(explicitPattern);
-  if (explicit) {
-    const candidate = sanitizeCompany(explicit[1]);
-    const quality = scoreCandidate(candidate, "explicit");
-    if (quality >= 0.78) return { name: candidate, confidence: quality };
-  }
+  const explicit = extractLeadingCompanyBeforeVerb(headline);
+  if (explicit) return explicit;
 
   const afterPreposition = headline.match(
     /(?:by|at|for|with)\s+([A-Z][A-Za-z0-9&.'\-]*(?:\s+[A-Z][A-Za-z0-9&.'\-]*){0,3})(?:\s|$)/
@@ -168,6 +158,46 @@ export function extractCompany(title, dynamicCompanies = []) {
   }
 
   return { name: null, confidence: 0 };
+}
+
+function extractLeadingCompanyBeforeVerb(headline) {
+  const verbPattern = COMPANY_VERBS.join("|");
+
+  // Stop at the first commercial-action verb instead of allowing the company
+  // capture to greedily consume that verb. Example:
+  // "Pearl Global Builds a Future-Ready..." -> "Pearl Global".
+  const pattern = new RegExp(
+    `^(.{2,80}?)\\s+(${verbPattern})\\b`,
+    "i"
+  );
+
+  const match = headline.match(pattern);
+  if (!match) return null;
+
+  const rawCandidate = clean(match[1])
+    .replace(/^(?:the|a|an)\\s+/i, "")
+    .trim();
+
+  const words = rawCandidate.split(/\s+/).filter(Boolean);
+  if (words.length < 1 || words.length > 4) return null;
+
+  // Require company-like capitalization. This rejects generic sentence
+  // fragments while accepting names such as Pearl Global, 3M and W.W. Grainger.
+  const companyLikeWords = words.filter((word) =>
+    /^[A-Z0-9][A-Za-z0-9&.'-]*$/.test(word)
+  ).length;
+
+  if (companyLikeWords !== words.length) return null;
+
+  const candidate = sanitizeCompany(rawCandidate);
+  const baseQuality = scoreCandidate(candidate, "explicit");
+
+  // A company-like phrase immediately followed by a strong corporate action
+  // verb is meaningful evidence even when the name has no legal suffix.
+  const confidence = Math.min(0.94, baseQuality + 0.14);
+
+  if (confidence < 0.78) return null;
+  return { name: candidate, confidence };
 }
 
 export function normalizeCompany(value) {
