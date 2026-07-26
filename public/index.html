@@ -32,12 +32,46 @@
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  "name": "Radaryum",
-  "url": "https://radaryum.com/",
-  "applicationCategory": "BusinessApplication",
-  "operatingSystem": "Web",
-  "description": "Public-source industrial opportunity intelligence for sales, procurement, business development and market intelligence teams."
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://radaryum.com/#organization",
+      "name": "Radaryum",
+      "url": "https://radaryum.com/",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "https://radaryum.com/favicon.svg"
+      },
+      "description": "Industrial opportunity intelligence built from public manufacturing, sourcing, investment and supply-chain signals."
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://radaryum.com/#website",
+      "url": "https://radaryum.com/",
+      "name": "Radaryum",
+      "publisher": { "@id": "https://radaryum.com/#organization" },
+      "inLanguage": "en"
+    },
+    {
+      "@type": "WebPage",
+      "@id": "https://radaryum.com/#webpage",
+      "url": "https://radaryum.com/",
+      "name": "Radaryum — Industrial Opportunity Intelligence",
+      "description": "Radaryum identifies companies showing signs of investment, sourcing activity, plant expansion and supplier change before the opportunity becomes obvious.",
+      "isPartOf": { "@id": "https://radaryum.com/#website" },
+      "about": { "@id": "https://radaryum.com/#organization" },
+      "inLanguage": "en"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "name": "Radaryum",
+      "url": "https://radaryum.com/",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Web",
+      "description": "Public-source industrial opportunity intelligence for sales, procurement, business development and market intelligence teams.",
+      "publisher": { "@id": "https://radaryum.com/#organization" }
+    }
+  ]
 }
 </script>
 
@@ -48,7 +82,7 @@
 <body>
 <header class="topbar">
   <a class="brand" href="/">RADARYUM</a>
-  <div class="topbar-right"><div class="live-status"><i></i><span id="status">Authentication loading</span></div><div class="auth-actions"><button id="signInButton" class="auth-button">Sign in</button><button id="signUpButton" class="auth-button auth-button-primary">Create account</button><div id="userButton" hidden></div></div></div>
+  <div class="topbar-right"><a class="public-nav-link" href="/companies">Companies</a><div class="live-status"><i></i><span id="status">Authentication loading</span></div><div class="auth-actions"><button id="signInButton" class="auth-button">Sign in</button><button id="signUpButton" class="auth-button auth-button-primary">Create account</button><div id="userButton" hidden></div></div></div>
 </header>
 
 <main>
@@ -175,7 +209,8 @@
 
 <footer>
   <span class="brand">RADARYUM</span>
-  <span>Industrial opportunity intelligence · v5.8 · radaryum.com</span>
+  <nav aria-label="Footer"><a href="/companies">Companies</a><a href="/?signup=1">Create free account</a></nav>
+  <span>Industrial opportunity intelligence · radaryum.com</span>
 </footer>
 
 <script src="/app.js"></script>

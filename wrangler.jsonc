@@ -22,7 +22,7 @@
     ]
   },
   "vars": {
-    "RADARYUM_VERSION": "6.1.0-seo-pages"
+    "RADARYUM_VERSION": "6.2.0-structured-data"
   },
   "d1_databases": [
     {

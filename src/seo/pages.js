@@ -28,6 +28,7 @@ export async function renderCompaniesIndex(env) {
     canonical: `${SITE_URL}/companies`,
     body: `<main class="page-shell">
       ${header()}
+      <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a><span>›</span><span>Companies</span></nav>
       <section class="page-hero">
         <p class="kicker">PUBLIC COMPANY INDEX</p>
         <h1>Industrial companies showing active opportunity signals</h1>
@@ -37,13 +38,36 @@ export async function renderCompaniesIndex(env) {
       <section class="company-grid">${cards || emptyState("No company signals are available yet.")}</section>
       ${signupCta("Track the companies that matter to you")}
     </main>${footer()}`,
-    structuredData: {
-      "@context": "https://schema.org",
-      "@type": "CollectionPage",
-      name: "Radaryum Industrial Company Signals",
-      url: `${SITE_URL}/companies`,
-      description
-    }
+    structuredData: [
+      {
+        "@context": "https://schema.org",
+        "@type": "CollectionPage",
+        "@id": `${SITE_URL}/companies#webpage`,
+        name: "Radaryum Industrial Company Signals",
+        url: `${SITE_URL}/companies`,
+        description,
+        isPartOf: { "@id": `${SITE_URL}/#website` },
+        about: ["Industrial companies", "Manufacturing signals", "Procurement signals", "Supply-chain signals"],
+        mainEntity: {
+          "@type": "ItemList",
+          numberOfItems: companies.length,
+          itemListElement: companies.slice(0, 100).map((company, index) => ({
+            "@type": "ListItem",
+            position: index + 1,
+            name: company.company,
+            url: `${SITE_URL}/company/${encodeURIComponent(slugify(company.company))}`
+          }))
+        }
+      },
+      {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "Home", item: `${SITE_URL}/` },
+          { "@type": "ListItem", position: 2, name: "Companies", item: `${SITE_URL}/companies` }
+        ]
+      }
+    ]
   }));
 }
 
@@ -107,11 +131,31 @@ export async function renderCompanyPage(env, rawSlug) {
     structuredData: [
       {
         "@context": "https://schema.org",
-        "@type": "WebPage",
+        "@type": "Organization",
+        "@id": `${canonical}#organization`,
+        name: company.company,
+        mainEntityOfPage: { "@id": `${canonical}#webpage` }
+      },
+      {
+        "@context": "https://schema.org",
+        "@type": "CollectionPage",
+        "@id": `${canonical}#webpage`,
         name: `${company.company} Industrial Opportunity Signals`,
         url: canonical,
         description,
-        dateModified: company.latest_at || new Date().toISOString()
+        isPartOf: { "@id": `${SITE_URL}/#website` },
+        about: { "@id": `${canonical}#organization` },
+        dateModified: company.latest_at || new Date().toISOString(),
+        mainEntity: {
+          "@type": "ItemList",
+          numberOfItems: events.length,
+          itemListElement: events.map((event, index) => ({
+            "@type": "ListItem",
+            position: index + 1,
+            name: event.title,
+            url: event.url
+          }))
+        }
       },
       {
         "@context": "https://schema.org",
@@ -230,10 +274,14 @@ function pageShell({ title, description, canonical, robots = "index,follow,max-i
 <meta property="og:description" content="${escapeAttribute(description)}">
 <meta property="og:url" content="${escapeAttribute(canonical)}">
 <meta property="og:image" content="${SITE_URL}/social-preview.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="${escapeAttribute(title)}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="${escapeAttribute(title)}">
 <meta name="twitter:description" content="${escapeAttribute(description)}">
 <meta name="twitter:image" content="${SITE_URL}/social-preview.png">
+<meta name="twitter:image:alt" content="${escapeAttribute(title)}">
 <link rel="stylesheet" href="/seo.css">
 ${jsonLd}
 </head>
@@ -246,7 +294,7 @@ function header() {
 }
 
 function footer() {
-  return `<footer class="seo-footer"><a class="brand" href="/">RADARYUM</a><span>Industrial opportunity intelligence from public sources.</span></footer>`;
+  return `<footer class="seo-footer"><div><a class="brand" href="/">RADARYUM</a><span>Industrial opportunity intelligence from public sources.</span></div><nav aria-label="Footer"><a href="/">Home</a><a href="/companies">Companies</a><a href="/?signup=1">Create free account</a></nav></footer>`;
 }
 
 function signupCta(title, company = "") {
