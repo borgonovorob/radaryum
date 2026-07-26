@@ -16,8 +16,15 @@ const GOOGLE_NEWS_QUERIES = [
 
 export async function fetchGdelt(window) {
   const normalizedWindow = normalizeTimespan(window);
-  const timeoutMs = normalizedWindow === "24h" ? 8500 : 5000;
-  const maxPerQuery = normalizedWindow === "24h" ? 55 : 35;
+  const timeoutMs =
+    normalizedWindow === "24h" ? 8500 :
+    normalizedWindow === "7d" ? 9000 :
+    7000;
+
+  const maxPerQuery =
+    normalizedWindow === "24h" ? 55 :
+    normalizedWindow === "7d" ? 60 :
+    45;
 
   const [gdelt, google] = await Promise.allSettled([
     collectGdelt(FAST_GDELT_QUERIES, normalizedWindow, maxPerQuery, timeoutMs),
