@@ -1,8 +1,7 @@
 import {
   dedupeProviderArticles,
   fetchWithTimeout,
-  normalizeWindow,
-  sleep
+  normalizeWindow
 } from "./common.js";
 
 const QUERIES = [
@@ -13,36 +12,38 @@ const QUERIES = [
 ];
 
 const TIMEOUT_MS = 15000;
-const REQUEST_DELAY_MS = 1500;
+const ROTATION_INTERVAL_MS = 15 * 60 * 1000;
 
 export const gdeltProvider = {
   id: "gdelt",
 
   async collect({ window }) {
     const normalizedWindow = normalizeWindow(window);
-    const maxRecords = normalizedWindow === "7d" ? 60 : 45;
-    const articles = [];
-    const errors = [];
+    const maxRecords = normalizedWindow === "7d" ? 80 : 50;
 
-    // GDELT is intentionally queried sequentially to reduce HTTP 429 responses.
-    for (let index = 0; index < QUERIES.length; index += 1) {
-      const group = QUERIES[index];
+    // One GDELT request per collector cycle.
+    // The category rotates every 15 minutes to reduce HTTP 429 responses.
+    const rotationIndex =
+      Math.floor(Date.now() / ROTATION_INTERVAL_MS) % QUERIES.length;
+    const group = QUERIES[rotationIndex];
 
-      try {
-        articles.push(...await fetchGroup(group, normalizedWindow, maxRecords));
-      } catch (error) {
-        errors.push(String(error?.message || error));
-      }
+    try {
+      const articles = await fetchGroup(group, normalizedWindow, maxRecords);
 
-      if (index < QUERIES.length - 1) await sleep(REQUEST_DELAY_MS);
+      return {
+        provider: "gdelt",
+        articles: dedupeProviderArticles(articles),
+        partial: false,
+        errors: []
+      };
+    } catch (error) {
+      return {
+        provider: "gdelt",
+        articles: [],
+        partial: true,
+        errors: [String(error?.message || error)]
+      };
     }
-
-    return {
-      provider: "gdelt",
-      articles: dedupeProviderArticles(articles),
-      partial: errors.length > 0,
-      errors
-    };
   }
 };
 
@@ -58,13 +59,25 @@ async function fetchGroup(group, window, maxRecords) {
   const response = await fetchWithTimeout(endpoint.toString(), {
     headers: {
       accept: "application/json",
-      "user-agent": "Radaryum/5.5 (+https://radaryum.com)"
+      "user-agent": "Radaryum/5.6 (+https://radaryum.com)"
     },
-    cf: { cacheTtl: 120, cacheEverything: true }
+    cf: {
+      cacheTtl: 300,
+      cacheEverything: true
+    }
   }, TIMEOUT_MS);
 
   const text = await response.text();
-  if (!response.ok) throw new Error(`GDELT ${group.id} HTTP ${response.status}`);
+
+  if (response.status === 429) {
+    throw new Error(
+      `GDELT ${group.id} HTTP 429 — rate limited; next cycle will rotate to another category`
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(`GDELT ${group.id} HTTP ${response.status}`);
+  }
 
   let data;
   try {
