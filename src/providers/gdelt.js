@@ -1,65 +1,84 @@
 import { SIGNAL_GROUPS } from "../config/signals.js";
 
 const REAL_FALLBACK_QUERIES = [
-  {
-    id: "expansion",
-    query: '"factory expansion" OR "new factory" OR "new plant" OR "manufacturing investment" OR "plant expansion" OR "production capacity"'
-  },
-  {
-    id: "procurement",
-    query: '"procurement manager" OR "strategic sourcing" OR "commodity manager" OR "supplier development" OR "supplier qualification" OR "new supplier"'
-  },
-  {
-    id: "product",
-    query: '"new product" OR "product launch" OR "starts production" OR "new platform" OR "production program"'
-  },
-  {
-    id: "supply",
-    query: '"supply chain" OR "supplier shortage" OR "dual sourcing" OR "supplier qualification" OR "local sourcing"'
-  }
+  { id: "expansion", query: '"factory expansion" OR "new factory" OR "new plant" OR "manufacturing investment" OR "production capacity"' },
+  { id: "procurement", query: '"procurement manager" OR "strategic sourcing" OR "commodity manager" OR "supplier development" OR "supplier qualification"' },
+  { id: "product", query: '"new product" OR "product launch" OR "starts production" OR "production program"' },
+  { id: "supply", query: '"supply chain" OR "supplier shortage" OR "dual sourcing" OR "supplier qualification"' }
 ];
 
 const GOOGLE_NEWS_QUERIES = [
   { id: "expansion", query: 'manufacturing investment OR factory expansion OR new plant OR production capacity' },
-  { id: "procurement", query: 'procurement manager OR strategic sourcing OR supplier development OR commodity manager manufacturing' },
+  { id: "procurement", query: 'procurement manager OR strategic sourcing OR supplier development manufacturing' },
   { id: "product", query: 'manufacturing new product launch OR starts production OR production program' },
-  { id: "supply", query: 'manufacturing supply chain OR supplier shortage OR dual sourcing OR supplier qualification' },
-  { id: "expansion", query: 'automotive supplier factory investment OR industrial manufacturing expansion' },
-  { id: "procurement", query: 'electronics manufacturing supplier sourcing OR industrial supplier qualification' }
+  { id: "supply", query: 'manufacturing supply chain OR supplier shortage OR dual sourcing' }
 ];
+
+const FETCH_TIMEOUT_MS = 6500;
+const COLLECTOR_BUDGET_MS = 17000;
 
 export async function fetchGdelt(window) {
   const normalizedWindow = normalizeTimespan(window);
+  const started = Date.now();
 
-  const gdeltAttempts = [
-    { name: "primary", groups: SIGNAL_GROUPS, records: 120 },
-    { name: "real-fallback", groups: REAL_FALLBACK_QUERIES, records: 100 }
+  const gdeltPrimary = await withBudget(
+    collectGdelt(SIGNAL_GROUPS, normalizedWindow, "primary", 80),
+    COLLECTOR_BUDGET_MS,
+    { articles: [], errors: ["GDELT primary budget expired"] }
+  );
+
+  if (gdeltPrimary.articles.length > 0) {
+    console.log(`GDELT primary returned ${gdeltPrimary.articles.length} real articles.`);
+    return gdeltPrimary.articles.slice(0, 160);
+  }
+
+  const remainingAfterPrimary = Math.max(4500, COLLECTOR_BUDGET_MS - (Date.now() - started));
+
+  const [gdeltFallback, googleNews] = await Promise.allSettled([
+    withBudget(
+      collectGdelt(REAL_FALLBACK_QUERIES, normalizedWindow, "real-fallback", 70),
+      Math.min(remainingAfterPrimary, 9000),
+      { articles: [], errors: ["GDELT fallback budget expired"] }
+    ),
+    withBudget(
+      collectGoogleNews(normalizedWindow),
+      Math.min(remainingAfterPrimary, 9000),
+      { articles: [], errors: ["Google News budget expired"] }
+    )
+  ]);
+
+  const articles = [
+    ...valueOrEmpty(gdeltFallback).articles,
+    ...valueOrEmpty(googleNews).articles
   ];
 
-  const errors = [];
+  const deduped = dedupeArticles(articles).slice(0, 180);
 
-  for (const attempt of gdeltAttempts) {
-    const result = await collectGdelt(attempt.groups, normalizedWindow, attempt.name, attempt.records);
-
-    if (result.articles.length > 0) {
-      console.log(`GDELT ${attempt.name} returned ${result.articles.length} real articles.`);
-      return result.articles;
-    }
-
-    errors.push(...result.errors);
-    console.warn(`GDELT ${attempt.name} returned zero articles.`);
+  if (deduped.length > 0) {
+    console.log(`Real collectors returned ${deduped.length} articles within budget.`);
+    return deduped;
   }
 
-  const rssResult = await collectGoogleNews(normalizedWindow);
-
-  if (rssResult.articles.length > 0) {
-    console.log(`Google News RSS returned ${rssResult.articles.length} real articles.`);
-    return rssResult.articles;
-  }
-
-  errors.push(...rssResult.errors);
-  console.error("All real news collectors returned zero articles.", JSON.stringify(errors));
+  console.warn("Real collectors returned zero within budget. No demo fallback used.");
   return [];
+}
+
+async function withBudget(promise, ms, fallback) {
+  let timeoutId;
+  const timeout = new Promise((resolve) => {
+    timeoutId = setTimeout(() => resolve(fallback), ms);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function valueOrEmpty(result) {
+  if (result.status === "fulfilled") return result.value;
+  return { articles: [], errors: [String(result.reason?.message || result.reason)] };
 }
 
 async function collectGdelt(groups, window, mode, maxRecords) {
@@ -71,11 +90,8 @@ async function collectGdelt(groups, window, mode, maxRecords) {
   const errors = [];
 
   for (const result of settled) {
-    if (result.status === "fulfilled") {
-      articles.push(...result.value);
-    } else {
-      errors.push(String(result.reason?.message || result.reason));
-    }
+    if (result.status === "fulfilled") articles.push(...result.value);
+    else errors.push(String(result.reason?.message || result.reason));
   }
 
   return { articles: dedupeArticles(articles), errors };
@@ -90,13 +106,13 @@ async function fetchGdeltGroup(group, window, mode, maxRecords) {
   endpoint.searchParams.set("sort", "datedesc");
   endpoint.searchParams.set("format", "json");
 
-  const response = await fetch(endpoint.toString(), {
+  const response = await fetchWithTimeout(endpoint.toString(), {
     headers: {
       accept: "application/json",
-      "user-agent": "Radaryum/4.3-real-news-collectors (+https://radaryum.com)"
+      "user-agent": "Radaryum/4.3b-timeout-safe-real-collectors (+https://radaryum.com)"
     },
     cf: { cacheTtl: 30, cacheEverything: true }
-  });
+  }, FETCH_TIMEOUT_MS);
 
   const text = await response.text();
 
@@ -131,14 +147,11 @@ async function collectGoogleNews(window) {
   const errors = [];
 
   for (const result of settled) {
-    if (result.status === "fulfilled") {
-      articles.push(...result.value);
-    } else {
-      errors.push(String(result.reason?.message || result.reason));
-    }
+    if (result.status === "fulfilled") articles.push(...result.value);
+    else errors.push(String(result.reason?.message || result.reason));
   }
 
-  return { articles: dedupeArticles(articles).slice(0, 180), errors };
+  return { articles: dedupeArticles(articles).slice(0, 160), errors };
 }
 
 async function fetchGoogleNewsGroup(group, window) {
@@ -149,13 +162,13 @@ async function fetchGoogleNewsGroup(group, window) {
   endpoint.searchParams.set("gl", "US");
   endpoint.searchParams.set("ceid", "US:en");
 
-  const response = await fetch(endpoint.toString(), {
+  const response = await fetchWithTimeout(endpoint.toString(), {
     headers: {
       accept: "application/rss+xml, application/xml, text/xml",
-      "user-agent": "Radaryum/4.3-real-news-collectors (+https://radaryum.com)"
+      "user-agent": "Radaryum/4.3b-timeout-safe-real-collectors (+https://radaryum.com)"
     },
     cf: { cacheTtl: 60, cacheEverything: true }
-  });
+  }, FETCH_TIMEOUT_MS);
 
   const xml = await response.text();
 
@@ -164,6 +177,17 @@ async function fetchGoogleNewsGroup(group, window) {
   }
 
   return parseRss(xml, group.id);
+}
+
+async function fetchWithTimeout(url, options, ms) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort("timeout"), ms);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function parseRss(xml, signal) {
