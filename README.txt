@@ -1,24 +1,12 @@
-Radaryum v5.8.2 — Robust company detection
+Radaryum v5.8.3 — Archive source links
 
-Replace in GitHub:
-- src/engines/entity.js
-- src/engines/pipeline.js
+Replace these files in GitHub:
+- src/engines/persistence.js
+- public/app.js
 
-Improvements:
-- Detects company names before a much broader set of corporate-action phrases.
-- Handles headlines such as:
-  - Pearl Global Builds...
-  - BeOne Medicines Plans...
-  - ABC Group to build...
-  - XYZ will invest...
-  - Company breaks ground...
-- Adds a conservative title-case fallback when the action verb is unknown.
-- Reprocesses archived events with null, "undetected", "unknown", or
-  "Company undetected" values during the next canonical refresh.
-- No D1 migration required.
-
-After deployment:
-Open:
-https://radaryum.com/api/events?window=7d&minScore=0&refresh=1
-
-Wait for the new snapshot, then reload the Event Stream.
+Changes:
+- Archive company cards now include up to five latest source-news links.
+- Each link includes date, signal, headline, and source domain.
+- The original article is not copied into D1; only the URL and existing event metadata are used.
+- No D1 migration is required.
+- Storage impact is negligible because the URLs already exist in the events table.

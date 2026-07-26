@@ -117,8 +117,8 @@ function renderCompanies(items,archived){
       <div><span class="confidence">${esc(c.confidence)} confidence</span><div class="company-action"><b>Suggested action</b><br>${esc(c.suggestedAction||"Review and verify.")}</div>
       <div class="feedback"><button onclick="feedback('company','${attr(c.id)}','useful')">Useful</button><button onclick="feedback('company','${attr(c.id)}','review')">Review</button><button onclick="feedback('company','${attr(c.id)}','dismiss')">Dismiss</button></div></div>
     </div>
-    ${!archived?`<div class="timeline">${(c.timeline||[]).map(t=>`
-      <div class="timeline-row"><time>${date(t.publishedAt)}</time><span class="chip">${esc(t.signalLabel)}</span><a href="${attr(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a><span class="domain">${esc(t.domain)}</span></div>`).join("")}</div>`:""}
+    ${(c.timeline||[]).length?`<div class="timeline">${(archived?(c.timeline||[]).slice(0,5):(c.timeline||[])).map(t=>`
+      <div class="timeline-row"><time>${date(t.publishedAt)}</time><span class="chip">${esc(t.signalLabel)}</span><a href="${attr(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a><span class="domain">${esc(t.domain)}</span></div>`).join("")}${archived?`<div class="archive-source-note">Showing the latest ${(c.timeline||[]).slice(0,5).length} archived source${(c.timeline||[]).slice(0,5).length===1?"":"s"}.</div>`:""}</div>`:""}
   </article>`).join("");
 }
 

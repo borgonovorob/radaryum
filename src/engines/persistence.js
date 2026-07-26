@@ -191,22 +191,102 @@ export async function readLatestSnapshot(env, window) {
 
 export async function readArchive(env, options = {}) {
   if (!hasDatabase(env)) return { configured: false, companies: [], events: [] };
+
   const limit = Math.min(100, Math.max(1, Number(options.limit || 50)));
   const minScore = Math.min(100, Math.max(0, Number(options.minScore || 0)));
   const country = String(options.country || "").trim();
-  const companyWhere = ["score >= ?"], companyBindings = [minScore];
-  if (country) { companyWhere.push("countries_json LIKE ?"); companyBindings.push(`%${country}%`); }
+
+  const companyWhere = ["score >= ?"];
+  const companyBindings = [minScore];
+
+  if (country) {
+    companyWhere.push("countries_json LIKE ?");
+    companyBindings.push(`%${country}%`);
+  }
+
   const companyResult = await env.DB.prepare(`
-    SELECT * FROM companies WHERE ${companyWhere.join(" AND ")}
-    ORDER BY score DESC, latest_at DESC LIMIT ?
+    SELECT *
+    FROM companies
+    WHERE ${companyWhere.join(" AND ")}
+    ORDER BY score DESC, latest_at DESC
+    LIMIT ?
   `).bind(...companyBindings, limit).all();
-  const eventWhere = ["score >= ?"], eventBindings = [minScore];
-  if (country) { eventWhere.push("country = ?"); eventBindings.push(country); }
+
+  const companies = (companyResult.results || []).map(parseCompany);
+
+  // Fetch the latest five archived source links for each returned company.
+  // Only URLs and event metadata are returned; article content is not stored.
+  if (companies.length) {
+    const companyIds = companies.map((company) => company.id);
+    const placeholders = companyIds.map(() => "?").join(",");
+
+    const timelineResult = await env.DB.prepare(`
+      SELECT
+        ce.company_id,
+        e.id,
+        e.title,
+        e.url,
+        e.domain,
+        e.provider,
+        e.published_at,
+        e.signal,
+        e.signal_label,
+        e.score
+      FROM company_events ce
+      INNER JOIN events e ON e.id = ce.event_id
+      WHERE ce.company_id IN (${placeholders})
+        AND e.url IS NOT NULL
+        AND TRIM(e.url) <> ''
+      ORDER BY ce.company_id, e.published_at DESC, e.score DESC
+    `).bind(...companyIds).all();
+
+    const timelines = new Map();
+
+    for (const row of timelineResult.results || []) {
+      const timeline = timelines.get(row.company_id) || [];
+      if (timeline.length >= 5) continue;
+
+      timeline.push({
+        id: row.id,
+        title: row.title,
+        url: row.url,
+        domain: row.domain,
+        provider: row.provider,
+        publishedAt: row.published_at,
+        signal: row.signal,
+        signalLabel: row.signal_label,
+        score: row.score
+      });
+
+      timelines.set(row.company_id, timeline);
+    }
+
+    for (const company of companies) {
+      company.timeline = timelines.get(company.id) || [];
+    }
+  }
+
+  const eventWhere = ["score >= ?"];
+  const eventBindings = [minScore];
+
+  if (country) {
+    eventWhere.push("country = ?");
+    eventBindings.push(country);
+  }
+
   const eventResult = await env.DB.prepare(`
-    SELECT * FROM events WHERE ${eventWhere.join(" AND ")}
-    ORDER BY published_at DESC, score DESC LIMIT ?
+    SELECT *
+    FROM events
+    WHERE ${eventWhere.join(" AND ")}
+    ORDER BY published_at DESC, score DESC
+    LIMIT ?
   `).bind(...eventBindings, limit).all();
-  return { configured: true, companies: (companyResult.results || []).map(parseCompany), events: (eventResult.results || []).map(parseEvent) };
+
+  return {
+    configured: true,
+    companies,
+    events: (eventResult.results || []).map(parseEvent)
+  };
 }
 
 export async function readStats(env) {
