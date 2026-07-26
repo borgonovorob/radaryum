@@ -1,29 +1,27 @@
-import { SIGNAL_GROUPS } from "../config/signals.js";
-
 const FAST_GDELT_QUERIES = [
-  { id: "expansion", query: '"factory expansion" OR "new factory" OR "new plant" OR "manufacturing investment"' },
-  { id: "procurement", query: '"strategic sourcing" OR "supplier development" OR "procurement manager"' },
-  { id: "product", query: '"starts production" OR "new product" OR "production program"' },
-  { id: "supply", query: '"supplier shortage" OR "dual sourcing" OR "supplier qualification"' }
+  { id: "expansion", query: '"factory expansion" OR "new factory" OR "new plant" OR "manufacturing investment" OR "production capacity"' },
+  { id: "procurement", query: '"strategic sourcing" OR "supplier development" OR "procurement manager" OR "commodity manager"' },
+  { id: "product", query: '"starts production" OR "new product" OR "production program" OR "product launch"' },
+  { id: "supply", query: '"supplier shortage" OR "dual sourcing" OR "supplier qualification" OR "supply chain"' }
 ];
 
-const FAST_GOOGLE_NEWS_QUERIES = [
-  { id: "expansion", query: 'manufacturing investment OR factory expansion OR new plant' },
-  { id: "procurement", query: 'strategic sourcing OR supplier development manufacturing' },
-  { id: "product", query: 'manufacturing new product launch OR starts production' },
-  { id: "supply", query: 'manufacturing supply chain OR supplier shortage' }
+const GOOGLE_NEWS_QUERIES = [
+  { id: "expansion", query: 'manufacturing OR factory OR plant OR production capacity OR industrial investment' },
+  { id: "procurement", query: 'procurement OR strategic sourcing OR supplier development OR commodity manager' },
+  { id: "product", query: 'manufacturing product launch OR starts production OR production program' },
+  { id: "supply", query: 'manufacturing supply chain OR supplier shortage OR dual sourcing OR supplier qualification' },
+  { id: "expansion", query: 'automotive supplier investment OR electronics manufacturing expansion' },
+  { id: "procurement", query: 'industrial supplier sourcing OR local sourcing manufacturing' }
 ];
-
-const FETCH_TIMEOUT_MS = 3500;
-const MAX_PER_QUERY = 35;
 
 export async function fetchGdelt(window) {
   const normalizedWindow = normalizeTimespan(window);
+  const timeoutMs = normalizedWindow === "24h" ? 8500 : 5000;
+  const maxPerQuery = normalizedWindow === "24h" ? 55 : 35;
 
-  // Fast production mode: query fewer sources, with short timeouts, and return partial real data.
   const [gdelt, google] = await Promise.allSettled([
-    collectGdelt(FAST_GDELT_QUERIES, normalizedWindow, "fast", MAX_PER_QUERY),
-    collectGoogleNews(normalizedWindow)
+    collectGdelt(FAST_GDELT_QUERIES, normalizedWindow, maxPerQuery, timeoutMs),
+    collectGoogleNews(normalizedWindow, timeoutMs)
   ]);
 
   const articles = [
@@ -31,14 +29,14 @@ export async function fetchGdelt(window) {
     ...valueOrEmpty(google).articles
   ];
 
-  const deduped = dedupeArticles(articles).slice(0, 120);
+  const deduped = dedupeArticles(articles).slice(0, 160);
 
   if (deduped.length > 0) {
-    console.log(`Fast real collectors returned ${deduped.length} articles.`);
+    console.log(`Real collectors returned ${deduped.length} articles for ${normalizedWindow}.`);
     return deduped;
   }
 
-  console.warn("Fast real collectors returned zero articles. No demo fallback used.");
+  console.warn(`Real collectors returned zero articles for ${normalizedWindow}.`);
   return [];
 }
 
@@ -47,23 +45,20 @@ function valueOrEmpty(result) {
   return { articles: [], errors: [String(result.reason?.message || result.reason)] };
 }
 
-async function collectGdelt(groups, window, mode, maxRecords) {
+async function collectGdelt(groups, window, maxRecords, timeoutMs) {
   const settled = await Promise.allSettled(
-    groups.map((group) => fetchGdeltGroup(group, window, mode, maxRecords))
+    groups.map((group) => fetchGdeltGroup(group, window, maxRecords, timeoutMs))
   );
 
   const articles = [];
-  const errors = [];
-
   for (const result of settled) {
     if (result.status === "fulfilled") articles.push(...result.value);
-    else errors.push(String(result.reason?.message || result.reason));
   }
 
-  return { articles: dedupeArticles(articles), errors };
+  return { articles: dedupeArticles(articles) };
 }
 
-async function fetchGdeltGroup(group, window, mode, maxRecords) {
+async function fetchGdeltGroup(group, window, maxRecords, timeoutMs) {
   const endpoint = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
   endpoint.searchParams.set("query", group.query);
   endpoint.searchParams.set("mode", "artlist");
@@ -75,22 +70,19 @@ async function fetchGdeltGroup(group, window, mode, maxRecords) {
   const response = await fetchWithTimeout(endpoint.toString(), {
     headers: {
       accept: "application/json",
-      "user-agent": "Radaryum/4.3c-fast-live-json-safe (+https://radaryum.com)"
+      "user-agent": "Radaryum/4.6-24h-collector-fix (+https://radaryum.com)"
     },
     cf: { cacheTtl: 30, cacheEverything: true }
-  }, FETCH_TIMEOUT_MS);
+  }, timeoutMs);
 
   const text = await response.text();
-
-  if (!response.ok) {
-    throw new Error(`GDELT ${group.id} ${mode} HTTP ${response.status}: ${text.slice(0, 120)}`);
-  }
+  if (!response.ok) throw new Error(`GDELT HTTP ${response.status}`);
 
   let data;
   try {
     data = JSON.parse(text);
   } catch {
-    throw new Error(`GDELT ${group.id} ${mode} non-JSON`);
+    throw new Error("GDELT returned invalid JSON");
   }
 
   const articles = Array.isArray(data.articles) ? data.articles : [];
@@ -100,30 +92,26 @@ async function fetchGdeltGroup(group, window, mode, maxRecords) {
     .map((article) => ({
       ...article,
       requestedSignal: normalizeSignal(group.id),
-      provider: `GDELT DOC 2.0 ${mode}`
+      provider: "GDELT DOC 2.0"
     }));
 }
 
-async function collectGoogleNews(window) {
+async function collectGoogleNews(window, timeoutMs) {
   const settled = await Promise.allSettled(
-    FAST_GOOGLE_NEWS_QUERIES.map((group) => fetchGoogleNewsGroup(group, window))
+    GOOGLE_NEWS_QUERIES.map((group) => fetchGoogleNewsGroup(group, window, timeoutMs))
   );
 
   const articles = [];
-  const errors = [];
-
   for (const result of settled) {
     if (result.status === "fulfilled") articles.push(...result.value);
-    else errors.push(String(result.reason?.message || result.reason));
   }
 
-  return { articles: dedupeArticles(articles).slice(0, 100), errors };
+  return { articles: dedupeArticles(articles).slice(0, 140) };
 }
 
-async function fetchGoogleNewsGroup(group, window) {
-  const when = googleWhen(window);
+async function fetchGoogleNewsGroup(group, window, timeoutMs) {
   const endpoint = new URL("https://news.google.com/rss/search");
-  endpoint.searchParams.set("q", `${group.query} when:${when}`);
+  endpoint.searchParams.set("q", `${group.query} when:${googleWhen(window)}`);
   endpoint.searchParams.set("hl", "en-US");
   endpoint.searchParams.set("gl", "US");
   endpoint.searchParams.set("ceid", "US:en");
@@ -131,16 +119,13 @@ async function fetchGoogleNewsGroup(group, window) {
   const response = await fetchWithTimeout(endpoint.toString(), {
     headers: {
       accept: "application/rss+xml, application/xml, text/xml",
-      "user-agent": "Radaryum/4.3c-fast-live-json-safe (+https://radaryum.com)"
+      "user-agent": "Radaryum/4.6-24h-collector-fix (+https://radaryum.com)"
     },
     cf: { cacheTtl: 60, cacheEverything: true }
-  }, FETCH_TIMEOUT_MS);
+  }, timeoutMs);
 
   const xml = await response.text();
-
-  if (!response.ok) {
-    throw new Error(`Google News RSS ${group.id} HTTP ${response.status}: ${xml.slice(0, 120)}`);
-  }
+  if (!response.ok) throw new Error(`Google News RSS HTTP ${response.status}`);
 
   return parseRss(xml, group.id);
 }
@@ -231,10 +216,7 @@ function domainFromUrl(value) {
 }
 
 function normalizeTimespan(value) {
-  if (value === "24h") return "24h";
-  if (value === "3d") return "3d";
-  if (value === "7d") return "7d";
-  return "3d";
+  return ["24h", "3d", "7d"].includes(value) ? value : "3d";
 }
 
 function googleWhen(window) {
@@ -244,8 +226,9 @@ function googleWhen(window) {
 }
 
 function normalizeSignal(value) {
-  if (["expansion", "procurement", "product", "supply"].includes(value)) return value;
-  return "expansion";
+  return ["expansion", "procurement", "product", "supply"].includes(value)
+    ? value
+    : "expansion";
 }
 
 function toGdeltDate(date) {
