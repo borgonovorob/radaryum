@@ -1,27 +1,18 @@
-Radaryum v5.8.5 — Multi-company events
+Radaryum v5.8.6 — Refresh button UX fix
 
-Replace/add in GitHub:
-- src/engines/entity.js
-- src/engines/pipeline.js
-- src/engines/correlation.js
-- src/engines/persistence.js
+Replace in GitHub:
 - public/app.js
-- migrations/0004_event_companies.sql
 
-IMPORTANT — run the D1 migration once:
-Cloudflare → D1 → radaryum-db → Console
+Why:
+The previous button waited up to 75 seconds for a new snapshot ID. When a
+refresh completed but produced unchanged content, the optimized persistence
+layer correctly skipped writing a new snapshot, so the ID did not change and
+the button appeared stuck.
 
-Paste and execute the contents of:
-migrations/0004_event_companies.sql
-
-What changes:
-- One event can belong to several companies.
-- Headlines such as “Ford and Geely Reshape…” detect both Ford and Geely.
-- The event is linked to both company cards through company_events.
-- Event Stream displays “Ford · Geely”.
-- Company timelines show “Also: …” for related companies.
-- Existing single-company events are backfilled into companies_json.
-- Stored events are reprocessed during refreshes as detection improves.
-
-After deployment and migration:
-https://radaryum.com/api/events?window=7d&minScore=0&refresh=1
+New behavior:
+- Starts the refresh normally.
+- Polls for a new snapshot for at most 30 seconds.
+- If content changes: shows "Updated".
+- If no new snapshot appears: shows "Refresh continues in background".
+- Re-enables the button instead of remaining locked for 75 seconds.
+- No D1 migration required.

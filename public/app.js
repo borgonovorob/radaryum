@@ -13,34 +13,68 @@ document.querySelectorAll("[data-view]").forEach(btn=>btn.addEventListener("clic
 
 q("#refresh").addEventListener("click",async()=>{
   if(refreshing)return;
+
   refreshing=true;
   const button=q("#refresh");
   button.disabled=true;
-  button.textContent="Refreshing…";
+  button.textContent="Starting refresh…";
 
   try{
     const before=await load(false);
-    const baseline=before?.snapshotId||before?.snapshotCreatedAt||before?.generatedAt||"";
-    forceNextRefresh=true;
-    await load(false);
-    button.textContent="Collecting signals…";
+    const baseline=snapshotMarker(before);
 
-    let changed=false;
-    for(let attempt=0;attempt<15;attempt+=1){
-      await new Promise(resolve=>setTimeout(resolve,5000));
-      button.textContent=`Collecting signals… ${Math.min(75,(attempt+1)*5)}s`;
-      const current=await load(false);
-      const marker=current?.snapshotId||current?.snapshotCreatedAt||current?.generatedAt||"";
-      if(marker&&marker!==baseline){changed=true;break;}
+    forceNextRefresh=true;
+    const requested=await load(false);
+
+    if(requested?.refresh?.requested){
+      button.textContent="Collecting signals…";
+    }else{
+      button.textContent="Refresh queued…";
     }
-    button.textContent=changed?"Updated":"Refresh queued";
-    await new Promise(resolve=>setTimeout(resolve,1200));
+
+    // The collectors run in the Worker background and can legitimately take
+    // longer than the browser should remain locked. Poll for at most 30 seconds.
+    let changed=false;
+
+    for(let attempt=0;attempt<6;attempt+=1){
+      await sleep(5000);
+      const current=await load(false);
+      const marker=snapshotMarker(current);
+
+      if(marker&&baseline&&marker!==baseline){
+        changed=true;
+        break;
+      }
+
+      button.textContent=`Collecting signals… ${(attempt+1)*5}s`;
+    }
+
+    button.textContent=changed
+      ? "Updated"
+      : "Refresh continues in background";
+
+    await sleep(changed?1200:2200);
+  }catch(error){
+    console.error("Refresh failed",error);
+    button.textContent="Refresh failed";
+    await sleep(1800);
   }finally{
     refreshing=false;
     button.disabled=false;
     button.textContent="Refresh live";
   }
 });
+
+function snapshotMarker(payload){
+  return payload?.snapshotId||
+    payload?.snapshotCreatedAt||
+    payload?.generatedAt||
+    "";
+}
+
+function sleep(ms){
+  return new Promise(resolve=>setTimeout(resolve,ms));
+}
 
 async function load(showLoading=true){
   controller?.abort();controller=new AbortController();
