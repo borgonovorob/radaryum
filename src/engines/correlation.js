@@ -6,9 +6,11 @@ export function correlateCompanies(events) {
   const groups = new Map();
 
   for (const event of events) {
-    if (!event.company || event.companyConfidence < 0.45) continue;
+    if (!event.company || event.companyConfidence < 0.70) continue;
+
     const key = normalizeCompany(event.company);
     if (!key || key.length < 3) continue;
+
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(event);
   }
