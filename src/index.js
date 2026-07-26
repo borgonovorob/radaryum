@@ -7,44 +7,47 @@ import {
   readStats,
   saveFeedback
 } from "./engines/persistence.js";
-import { json } from "./utils/http.js";
 import { clamp } from "./utils/text.js";
 
-const CACHE_KEY = new Request("https://radaryum.internal/api/correlated?window=3d&engine=v4.1g");
+const SNAPSHOT_VERSION = "v4.4";
+const SNAPSHOT_TTL_SECONDS = 180;
+const inflightScans = new Map();
 
 export default {
   async fetch(request, env, ctx) {
     try {
       const url = new URL(request.url);
 
-    if (url.pathname === "/api/companies") return handleCompanies(request, env, ctx);
-    if (url.pathname === "/api/opportunities") return handleEvents(request, env, ctx);
-    if (url.pathname === "/api/events") return handleEvents(request, env, ctx);
-    if (url.pathname === "/api/archive") return handleArchive(request, env);
-    if (url.pathname === "/api/stats") return handleStats(env);
-    if (url.pathname === "/api/feedback" && request.method === "POST") {
-      return handleFeedback(request, env);
-    }
-    if (url.pathname === "/api/health") {
-      return noStoreJson({
-        ok: true,
-        service: "radaryum",
-        version: "4.0.0",
-        architecture: "modular-persistent",
-        databaseConfigured: hasDatabase(env),
-        time: new Date().toISOString()
-      }, 200, 60);
-    }
+      if (url.pathname === "/api/companies") return handleCompanies(request, env, ctx);
+      if (url.pathname === "/api/opportunities") return handleEvents(request, env, ctx);
+      if (url.pathname === "/api/events") return handleEvents(request, env, ctx);
+      if (url.pathname === "/api/archive") return handleArchive(request, env);
+      if (url.pathname === "/api/stats") return handleStats(env);
+      if (url.pathname === "/api/feedback" && request.method === "POST") {
+        return handleFeedback(request, env);
+      }
 
-    if (url.pathname.startsWith("/api/")) {
-      return noStoreJson({
-        error: "API route not found",
-        path: url.pathname,
-        ok: false
-      }, 404);
-    }
+      if (url.pathname === "/api/health") {
+        return noStoreJson({
+          ok: true,
+          service: "radaryum",
+          version: "4.4.0",
+          architecture: "shared-live-snapshot",
+          snapshotTtlSeconds: SNAPSHOT_TTL_SECONDS,
+          databaseConfigured: hasDatabase(env),
+          time: new Date().toISOString()
+        });
+      }
 
-    return env.ASSETS.fetch(request);
+      if (url.pathname.startsWith("/api/")) {
+        return noStoreJson({
+          error: "API route not found",
+          path: url.pathname,
+          ok: false
+        }, 404);
+      }
+
+      return env.ASSETS.fetch(request);
     } catch (error) {
       return noStoreJson({
         error: String(error?.message || error),
@@ -54,7 +57,7 @@ export default {
   },
 
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(refreshAndPersist(env));
+    ctx.waitUntil(refreshSnapshot("3d", env));
   }
 };
 
@@ -63,20 +66,28 @@ async function handleCompanies(request, env, ctx) {
   const window = normalizeWindow(url.searchParams.get("window"));
   const country = (url.searchParams.get("country") || "").trim();
   const minScore = clamp(Number(url.searchParams.get("minScore") || 60), 0, 100);
+  const forceRefresh = url.searchParams.get("refresh") === "1";
 
   try {
-    const payload = await getPayload(window, env, ctx);
-    let companies = payload.companies;
-    if (country) companies = companies.filter((company) => company.countries.includes(country));
+    const payload = await getSharedPayload(window, env, ctx, forceRefresh);
+    let companies = Array.isArray(payload.companies) ? payload.companies : [];
+
+    if (country) {
+      companies = companies.filter((company) =>
+        Array.isArray(company.countries) && company.countries.includes(country)
+      );
+    }
+
     companies = companies.filter((company) => company.score >= minScore);
 
     return noStoreJson({
       ...payload,
       events: undefined,
       companies,
+      snapshot: snapshotInfo(payload),
       persistence: { configured: hasDatabase(env) },
       filters: { window, country, minScore }
-    }, 200, 300);
+    });
   } catch (error) {
     return noStoreJson({ error: String(error?.message || error), ok: false }, 500);
   }
@@ -88,10 +99,12 @@ async function handleEvents(request, env, ctx) {
   const signal = normalizeSignal(url.searchParams.get("signal"));
   const country = (url.searchParams.get("country") || "").trim();
   const minScore = clamp(Number(url.searchParams.get("minScore") || 55), 0, 100);
+  const forceRefresh = url.searchParams.get("refresh") === "1";
 
   try {
-    const payload = await getPayload(window, env, ctx);
-    let events = payload.events;
+    const payload = await getSharedPayload(window, env, ctx, forceRefresh);
+    let events = Array.isArray(payload.events) ? payload.events : [];
+
     if (signal) events = events.filter((event) => event.signal === signal);
     if (country) events = events.filter((event) => event.country === country);
     events = events.filter((event) => event.score >= minScore);
@@ -100,9 +113,10 @@ async function handleEvents(request, env, ctx) {
       ...payload,
       companies: undefined,
       events,
+      snapshot: snapshotInfo(payload),
       persistence: { configured: hasDatabase(env) },
       filters: { window, signal, country, minScore }
-    }, 200, 300);
+    });
   } catch (error) {
     return noStoreJson({ error: String(error?.message || error), ok: false }, 500);
   }
@@ -110,16 +124,18 @@ async function handleEvents(request, env, ctx) {
 
 async function handleArchive(request, env) {
   const url = new URL(request.url);
+
   try {
     const archive = await readArchive(env, {
       limit: url.searchParams.get("limit"),
       minScore: url.searchParams.get("minScore"),
       country: url.searchParams.get("country")
     });
+
     return noStoreJson({
       generatedAt: new Date().toISOString(),
       ...archive
-    }, 200, 120);
+    });
   } catch (error) {
     return noStoreJson({ error: String(error?.message || error), ok: false }, 500);
   }
@@ -130,7 +146,7 @@ async function handleStats(env) {
     return noStoreJson({
       generatedAt: new Date().toISOString(),
       ...(await readStats(env))
-    }, 200, 60);
+    });
   } catch (error) {
     return noStoreJson({ error: String(error?.message || error), ok: false }, 500);
   }
@@ -139,38 +155,104 @@ async function handleStats(env) {
 async function handleFeedback(request, env) {
   try {
     const input = await request.json();
-    return noStoreJson(await saveFeedback(env, input), 200, 0);
+    return noStoreJson(await saveFeedback(env, input));
   } catch (error) {
-    return noStoreJson({ error: String(error?.message || error) }, 400, 0);
+    return noStoreJson({ error: String(error?.message || error) }, 400);
   }
 }
 
-async function getPayload(window, env, ctx) {
-  // Real live mode: do not use Cloudflare Worker cache for live payloads.
-  // D1 Archive remains persistent, but Live Radar is always freshly collected.
+async function getSharedPayload(window, env, ctx, forceRefresh = false) {
+  const cacheKey = snapshotKey(window);
+
+  if (!forceRefresh) {
+    const cached = await caches.default.match(cacheKey);
+    if (cached) return cached.json();
+  }
+
+  if (inflightScans.has(window)) {
+    return inflightScans.get(window);
+  }
+
+  const promise = createSnapshot(window, env, ctx, cacheKey);
+  inflightScans.set(window, promise);
+
+  try {
+    return await promise;
+  } finally {
+    inflightScans.delete(window);
+  }
+}
+
+async function createSnapshot(window, env, ctx, cacheKey) {
   const started = Date.now();
   const payload = await runPipeline(window);
-  payload.elapsedMs = Date.now() - started;
+
+  const snapshotPayload = {
+    ...payload,
+    elapsedMs: Date.now() - started,
+    snapshotId: `${SNAPSHOT_VERSION}-${window}-${Date.now()}`,
+    snapshotCreatedAt: new Date().toISOString(),
+    snapshotWindow: window
+  };
+
+  await caches.default.put(cacheKey, snapshotResponse(snapshotPayload));
 
   if (hasDatabase(env) && ctx) {
-    ctx.waitUntil(persistPipeline(env.DB, payload).catch((error) => {
-      console.error("D1 persistence failed", error);
-    }));
+    ctx.waitUntil(
+      persistPipeline(env.DB, snapshotPayload).catch((error) => {
+        console.error("D1 persistence failed", error);
+      })
+    );
   }
 
-  return payload;
+  return snapshotPayload;
 }
 
-async function refreshAndPersist(env) {
+async function refreshSnapshot(window, env) {
   try {
-    const payload = await runPipeline("3d");
+    const started = Date.now();
+    const payload = await runPipeline(window);
+
+    const snapshotPayload = {
+      ...payload,
+      elapsedMs: Date.now() - started,
+      snapshotId: `${SNAPSHOT_VERSION}-${window}-${Date.now()}`,
+      snapshotCreatedAt: new Date().toISOString(),
+      snapshotWindow: window
+    };
+
     await Promise.all([
-      caches.default.put(CACHE_KEY, json(payload, 200, 900)),
-      persistPipeline(env.DB, payload)
+      caches.default.put(snapshotKey(window), snapshotResponse(snapshotPayload)),
+      hasDatabase(env) ? persistPipeline(env.DB, snapshotPayload) : Promise.resolve()
     ]);
   } catch (error) {
     console.error("Scheduled refresh failed", error);
   }
+}
+
+function snapshotResponse(payload) {
+  return new Response(JSON.stringify(payload), {
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": `public, max-age=${SNAPSHOT_TTL_SECONDS}`
+    }
+  });
+}
+
+function snapshotKey(window) {
+  return new Request(
+    `https://radaryum.internal/live-snapshot/${SNAPSHOT_VERSION}/${window}`
+  );
+}
+
+function snapshotInfo(payload) {
+  return {
+    id: payload.snapshotId,
+    createdAt: payload.snapshotCreatedAt,
+    window: payload.snapshotWindow,
+    ttlSeconds: SNAPSHOT_TTL_SECONDS,
+    shared: true
+  };
 }
 
 function normalizeWindow(value) {
@@ -180,7 +262,6 @@ function normalizeWindow(value) {
 function normalizeSignal(value) {
   return SIGNAL_GROUPS.some((group) => group.id === value) ? value : "";
 }
-
 
 function noStoreJson(payload, status = 200) {
   return new Response(JSON.stringify(payload, null, 2), {
@@ -193,4 +274,3 @@ function noStoreJson(payload, status = 200) {
     }
   });
 }
-
