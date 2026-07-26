@@ -54,15 +54,16 @@ export async function persistPipeline(env, payload, window = "7d") {
     statements.push(env.DB.prepare(`
       INSERT INTO events (
         id, title, url, domain, provider, published_at, signal, signal_label,
-        country, company, company_confidence, score, confidence, reasons_json,
+        country, company, companies_json, company_confidence, score, confidence, reasons_json,
         suggested_action, source_language, source_country,
         sec_form, sec_relevance_score, sec_matched_terms_json, sec_evidence_snippet,
         first_seen_at, last_seen_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         title=excluded.title, url=excluded.url, domain=excluded.domain, provider=excluded.provider,
         published_at=excluded.published_at, signal=excluded.signal, signal_label=excluded.signal_label,
         country=excluded.country, company=excluded.company,
+        companies_json=excluded.companies_json,
         company_confidence=excluded.company_confidence, score=excluded.score,
         confidence=excluded.confidence, reasons_json=excluded.reasons_json,
         suggested_action=excluded.suggested_action, source_language=excluded.source_language,
@@ -76,6 +77,7 @@ export async function persistPipeline(env, payload, window = "7d") {
         events.published_at IS NOT excluded.published_at OR events.signal IS NOT excluded.signal OR
         events.signal_label IS NOT excluded.signal_label OR events.country IS NOT excluded.country OR
         events.company IS NOT excluded.company OR
+        events.companies_json IS NOT excluded.companies_json OR
         events.company_confidence IS NOT excluded.company_confidence OR
         events.score IS NOT excluded.score OR events.confidence IS NOT excluded.confidence OR
         events.reasons_json IS NOT excluded.reasons_json OR
@@ -89,6 +91,7 @@ export async function persistPipeline(env, payload, window = "7d") {
     `).bind(
       event.id, event.title, event.url, event.domain, event.provider || payload.provider,
       event.publishedAt, event.signal, event.signalLabel, event.country, event.company,
+      JSON.stringify(event.companies || (event.company ? [event.company] : [])),
       event.companyConfidence || 0, event.score, event.confidence, reasonsJson,
       event.suggestedAction || null, event.sourceLanguage || null, event.sourceCountry || null,
       event.secForm || null, event.secRelevanceScore || null, secTermsJson,
@@ -231,6 +234,8 @@ export async function readArchive(env, options = {}) {
         e.published_at,
         e.signal,
         e.signal_label,
+        e.company,
+        e.companies_json,
         e.score
       FROM company_events ce
       INNER JOIN events e ON e.id = ce.event_id
@@ -255,6 +260,8 @@ export async function readArchive(env, options = {}) {
         publishedAt: row.published_at,
         signal: row.signal,
         signalLabel: row.signal_label,
+        company: row.company,
+        companies: safeJson(row.companies_json, row.company ? [row.company] : []),
         score: row.score
       });
 
@@ -333,5 +340,34 @@ function snapshotSignature(payload) {
 }
 function windowHours(window) { return window === "24h" ? 24 : window === "3d" ? 72 : 168; }
 function parseCompany(row) { return { id:row.id, company:row.company, normalizedCompany:row.normalized_company, score:row.score, confidence:row.confidence, signalCount:row.signal_count, eventCount:row.event_count, sourceCount:row.source_count, signals:safeJson(row.signals_json,[]), countries:safeJson(row.countries_json,[]), reasons:safeJson(row.reasons_json,[]), suggestedAction:row.suggested_action, latestAt:row.latest_at, firstSeenAt:row.first_seen_at, lastSeenAt:row.last_seen_at, archived:true }; }
-function parseEvent(row) { return { id:row.id, title:row.title, url:row.url, domain:row.domain, provider:row.provider, publishedAt:row.published_at, signal:row.signal, signalLabel:row.signal_label, country:row.country, company:row.company, companyConfidence:row.company_confidence, score:row.score, confidence:row.confidence, reasons:safeJson(row.reasons_json,[]), suggestedAction:row.suggested_action, sourceLanguage:row.source_language, sourceCountry:row.source_country, secForm:row.sec_form||null, secRelevanceScore:row.sec_relevance_score||null, secMatchedTerms:safeJson(row.sec_matched_terms_json,[]), secEvidenceSnippet:row.sec_evidence_snippet||null, firstSeenAt:row.first_seen_at, lastSeenAt:row.last_seen_at, archived:true }; }
+function parseEvent(row) {
+  const companies = safeJson(row.companies_json, row.company ? [row.company] : []);
+  return {
+    id: row.id,
+    title: row.title,
+    url: row.url,
+    domain: row.domain,
+    provider: row.provider,
+    publishedAt: row.published_at,
+    signal: row.signal,
+    signalLabel: row.signal_label,
+    country: row.country,
+    company: row.company || companies[0] || null,
+    companies,
+    companyConfidence: row.company_confidence,
+    score: row.score,
+    confidence: row.confidence,
+    reasons: safeJson(row.reasons_json, []),
+    suggestedAction: row.suggested_action,
+    sourceLanguage: row.source_language,
+    sourceCountry: row.source_country,
+    secForm: row.sec_form || null,
+    secRelevanceScore: row.sec_relevance_score || null,
+    secMatchedTerms: safeJson(row.sec_matched_terms_json, []),
+    secEvidenceSnippet: row.sec_evidence_snippet || null,
+    firstSeenAt: row.first_seen_at,
+    lastSeenAt: row.last_seen_at,
+    archived: true
+  };
+}
 function safeJson(value, fallback) { try { return JSON.parse(value); } catch { return fallback; } }

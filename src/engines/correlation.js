@@ -11,13 +11,24 @@ export function correlateCompanies(events) {
   const groups = new Map();
 
   for (const event of events) {
-    if (!event.company || event.companyConfidence < 0.60) continue;
+    if (event.companyConfidence < 0.60) continue;
 
-    const key = normalizeCompany(event.company);
-    if (!key || key.length < 3 || BAD_COMPANY_NAMES.has(key)) continue;
+    const eventCompanies = Array.isArray(event.companies) && event.companies.length
+      ? event.companies
+      : event.company
+        ? [event.company]
+        : [];
 
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(event);
+    for (const companyName of eventCompanies) {
+      const key = normalizeCompany(companyName);
+      if (!key || key.length < 3 || BAD_COMPANY_NAMES.has(key)) continue;
+
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({
+        ...event,
+        company: companyName
+      });
+    }
   }
 
   const companies = [];

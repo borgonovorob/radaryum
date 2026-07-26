@@ -1,25 +1,27 @@
-Radaryum v5.8.4 — Marketing, trust and SEO
+Radaryum v5.8.5 — Multi-company events
 
-Replace/add these files in GitHub:
-- public/index.html
-- public/styles.css
-- public/favicon.svg
-- public/robots.txt
-- public/sitemap.xml
+Replace/add in GitHub:
+- src/engines/entity.js
+- src/engines/pipeline.js
+- src/engines/correlation.js
+- src/engines/persistence.js
+- public/app.js
+- migrations/0004_event_companies.sql
 
-Keep the existing file:
-- public/social-preview.png
+IMPORTANT — run the D1 migration once:
+Cloudflare → D1 → radaryum-db → Console
 
-Included:
-- Primary CTA: Start tracking opportunities
-- Audience section for B2B Sales, Procurement, Business Development and Market Intelligence
-- Public-source intelligence / 30-minute update trust message
-- Clear score and RFQ disclaimer
-- canonical URL
-- Open Graph and X/Twitter large-image metadata
-- favicon
-- robots.txt
-- sitemap.xml
-- SoftwareApplication structured data
+Paste and execute the contents of:
+migrations/0004_event_companies.sql
 
-No D1 migration is required.
+What changes:
+- One event can belong to several companies.
+- Headlines such as “Ford and Geely Reshape…” detect both Ford and Geely.
+- The event is linked to both company cards through company_events.
+- Event Stream displays “Ford · Geely”.
+- Company timelines show “Also: …” for related companies.
+- Existing single-company events are backfilled into companies_json.
+- Stored events are reprocessed during refreshes as detection improves.
+
+After deployment and migration:
+https://radaryum.com/api/events?window=7d&minScore=0&refresh=1

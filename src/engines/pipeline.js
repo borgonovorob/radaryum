@@ -4,7 +4,7 @@ import { collectSources } from "../collectors/orchestrator.js";
 import { classifySignal } from "./classification.js";
 import { correlateCompanies } from "./correlation.js";
 import { deduplicateArticles } from "./deduplication.js";
-import { extractCompany } from "./entity.js";
+import { extractCompanies } from "./entity.js";
 import { readActiveCompanyCatalog, readRecentEvents } from "./persistence.js";
 import { scoreEvent } from "./scoring.js";
 import { clean, parseGdeltDate, safeDomain, stableId } from "../utils/text.js";
@@ -49,30 +49,45 @@ export async function runPipeline(window, env) {
 }
 
 function repairStoredCompany(event, configuredCompanies) {
-  const existing = String(event?.company || "").trim().toLowerCase();
-  const unresolved = !existing || ["company undetected", "undetected", "unknown"].includes(existing);
-  if (!unresolved || !event?.title) return event;
+  if (!event?.title) return event;
 
-  const entity = extractCompany(event.title, configuredCompanies);
-  if (!entity.name) return event;
+  const detected = extractCompanies(event.title, configuredCompanies);
+  const existingCompanies = Array.isArray(event.companies)
+    ? event.companies.filter(Boolean)
+    : event.company
+      ? [event.company]
+      : [];
+
+  const mergedCompanies = uniqueCompanies([
+    ...existingCompanies,
+    ...detected.map((entity) => entity.name)
+  ]);
+
+  if (!mergedCompanies.length) return event;
+
+  const primary = mergedCompanies[0];
+  const companyConfidence = Math.max(
+    Number(event.companyConfidence || 0),
+    ...detected.map((entity) => Number(entity.confidence || 0))
+  );
 
   const scoring = scoreEvent({
     title: event.title,
     signal: event.signal,
     country: event.country,
     publishedAt: event.publishedAt,
-    company: entity.name
+    company: primary
   });
+
+  const score = Math.max(event.score || 0, scoring.score);
 
   return {
     ...event,
-    company: entity.name,
-    companyConfidence: entity.confidence,
-    score: Math.max(event.score || 0, scoring.score),
-    confidence:
-      Math.max(event.score || 0, scoring.score) >= 82 ? "High" :
-      Math.max(event.score || 0, scoring.score) >= 67 ? "Medium" :
-      "Review",
+    company: primary,
+    companies: mergedCompanies,
+    companyConfidence,
+    score,
+    confidence: score >= 82 ? "High" : score >= 67 ? "Medium" : "Review",
     reasons: scoring.reasons
   };
 }
@@ -92,18 +107,79 @@ function insideWindow(value, window) {
 }
 
 function enrichEvent(article, configuredCompanies) {
-  const title=clean(article.title||"Untitled source");
-  const domain=clean(article.domain||safeDomain(article.url));
-  const combined=`${title} ${domain}`;
-  const signal=classifySignal(combined,article.requestedSignal);
-  const country=detectCountry(combined);
-  const publishedAt=parseGdeltDate(article.seendate)||new Date().toISOString();
-  const entity=article.sourceCompany ? {name:article.sourceCompany,confidence:0.99} : extractCompany(title,configuredCompanies);
-  const scoring=scoreEvent({title,signal,country,publishedAt,company:entity.name});
-  if(article.provider==="SEC EDGAR"){
-    if(article.secRelevanceScore) scoring.reasons.unshift(`SEC filing relevance score: ${article.secRelevanceScore}.`);
-    if(article.secMatchedTerms?.length) scoring.reasons.unshift(`SEC evidence matched: ${article.secMatchedTerms.slice(0,4).join(", ")}.`);
+  const title = clean(article.title || "Untitled source");
+  const domain = clean(article.domain || safeDomain(article.url));
+  const combined = `${title} ${domain}`;
+  const signal = classifySignal(combined, article.requestedSignal);
+  const country = detectCountry(combined);
+  const publishedAt = parseGdeltDate(article.seendate) || new Date().toISOString();
+
+  const entities = article.sourceCompany
+    ? [{ name: article.sourceCompany, confidence: 0.99 }]
+    : extractCompanies(title, configuredCompanies);
+
+  const companies = uniqueCompanies(entities.map((entity) => entity.name));
+  const primaryCompany = companies[0] || null;
+  const companyConfidence = entities.length
+    ? Math.max(...entities.map((entity) => Number(entity.confidence || 0)))
+    : 0;
+
+  const scoring = scoreEvent({
+    title,
+    signal,
+    country,
+    publishedAt,
+    company: primaryCompany
+  });
+
+  if (article.provider === "SEC EDGAR") {
+    if (article.secRelevanceScore) {
+      scoring.reasons.unshift(`SEC filing relevance score: ${article.secRelevanceScore}.`);
+    }
+    if (article.secMatchedTerms?.length) {
+      scoring.reasons.unshift(`SEC evidence matched: ${article.secMatchedTerms.slice(0, 4).join(", ")}.`);
+    }
   }
-  return { id:stableId(article.url), title, url:article.url, domain, provider:article.provider, publishedAt, signal, signalLabel:signalLabel(signal), country, company:entity.name, companyConfidence:entity.confidence, score:scoring.score, confidence:scoring.score>=82?"High":scoring.score>=67?"Medium":"Review", reasons:scoring.reasons, suggestedAction:suggestedAction(signal), sourceLanguage:article.language||null, sourceCountry:article.sourcecountry||null, secForm:article.secForm||null, secRelevanceScore:article.secRelevanceScore||null, secMatchedTerms:article.secMatchedTerms||[], secEvidenceSnippet:article.secEvidenceSnippet||null };
+
+  return {
+    id: stableId(article.url),
+    title,
+    url: article.url,
+    domain,
+    provider: article.provider,
+    publishedAt,
+    signal,
+    signalLabel: signalLabel(signal),
+    country,
+    company: primaryCompany,
+    companies,
+    companyConfidence,
+    score: scoring.score,
+    confidence: scoring.score >= 82 ? "High" : scoring.score >= 67 ? "Medium" : "Review",
+    reasons: scoring.reasons,
+    suggestedAction: suggestedAction(signal),
+    sourceLanguage: article.language || null,
+    sourceCountry: article.sourcecountry || null,
+    secForm: article.secForm || null,
+    secRelevanceScore: article.secRelevanceScore || null,
+    secMatchedTerms: article.secMatchedTerms || [],
+    secEvidenceSnippet: article.secEvidenceSnippet || null
+  };
 }
+
+function uniqueCompanies(values) {
+  const output = [];
+  const seen = new Set();
+
+  for (const value of values || []) {
+    const name = clean(value);
+    const key = name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (!name || !key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(name);
+  }
+
+  return output;
+}
+
 function suggestedAction(signal){return {expansion:"Verify the investment and identify the plant, program and local sourcing leadership.",procurement:"Verify the role or sourcing initiative and identify the responsible category or commodity manager.",product:"Map the product architecture, likely components and expected sourcing or industrialization window.",supply:"Check whether the event creates dual-sourcing, localization or replacement-supplier demand."}[signal]||"Review the original source and verify the commercial relevance.";}

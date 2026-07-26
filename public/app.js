@@ -118,7 +118,7 @@ function renderCompanies(items,archived){
       <div class="feedback"><button onclick="feedback('company','${attr(c.id)}','useful')">Useful</button><button onclick="feedback('company','${attr(c.id)}','review')">Review</button><button onclick="feedback('company','${attr(c.id)}','dismiss')">Dismiss</button></div></div>
     </div>
     ${(c.timeline||[]).length?`<div class="timeline">${(archived?(c.timeline||[]).slice(0,5):(c.timeline||[])).map(t=>`
-      <div class="timeline-row"><time>${date(t.publishedAt)}</time><span class="chip">${esc(t.signalLabel)}</span><a href="${attr(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a><span class="domain">${esc(t.domain)}</span></div>`).join("")}${archived?`<div class="archive-source-note">Showing the latest ${(c.timeline||[]).slice(0,5).length} archived source${(c.timeline||[]).slice(0,5).length===1?"":"s"}.</div>`:""}</div>`:""}
+      <div class="timeline-row"><time>${date(t.publishedAt)}</time><span class="chip">${esc(t.signalLabel)}</span><a href="${attr(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a>${relatedCompanies(t,c.company)}<span class="domain">${esc(t.domain)}</span></div>`).join("")}${archived?`<div class="archive-source-note">Showing the latest ${(c.timeline||[]).slice(0,5).length} archived source${(c.timeline||[]).slice(0,5).length===1?"":"s"}.</div>`:""}</div>`:""}
   </article>`).join("");
 }
 
@@ -126,7 +126,7 @@ function renderEvents(items){
   if(!items.length){q("#list").innerHTML='<div class="empty">No events matched these filters.</div>';return;}
   q("#list").innerHTML=items.map(x=>`
   <article class="event-card"><div class="score">${x.score}<span>EVENT SCORE</span></div>
-  <div><h2>${esc(x.title)}</h2><div class="meta">${esc(x.company||"Company undetected")} · ${esc(x.country)} · ${date(x.publishedAt)}</div>
+  <div><h2>${esc(x.title)}</h2><div class="meta">${esc(companyNames(x))} · ${esc(x.country)} · ${date(x.publishedAt)}</div>
   <div class="chips"><span class="chip">${esc(x.signalLabel)}</span><span class="chip">${esc(x.domain)}</span></div>
   <div class="source-box"><div><b>Source:</b> ${esc(x.provider||"Public source")}</div><div><b>Published:</b> ${date(x.publishedAt)}</div>${secEvidence(x)}</div>
   <div class="reason">${(x.reasons||[]).map(r=>`<div>• ${esc(r)}</div>`).join("")}</div></div>
@@ -151,6 +151,19 @@ async function feedback(targetType,targetId,rating){
     const d=await r.json();if(!r.ok)throw new Error(d.error||"Feedback failed");
     q("#status").textContent=d.stored?"Feedback saved":"Feedback requires D1";
   }catch(e){q("#status").textContent=e.message;}
+}
+
+function companyNames(event){
+  const companies=Array.isArray(event?.companies)&&event.companies.length
+    ? event.companies
+    : event?.company?[event.company]:[];
+  return companies.length?companies.join(" · "):"Company undetected";
+}
+
+function relatedCompanies(event,currentCompany){
+  const companies=Array.isArray(event?.companies)?event.companies:[];
+  const related=companies.filter(name=>String(name).toLowerCase()!==String(currentCompany||"").toLowerCase());
+  return related.length?`<span class="related-companies">Also: ${related.map(esc).join(", ")}</span>`:"";
 }
 
 function label(s){return({expansion:"Factory expansion",procurement:"Procurement activity",product:"Product launch",supply:"Supply-chain change"})[s]||s;}

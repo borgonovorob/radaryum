@@ -130,74 +130,100 @@ const COMPANY_ACTIONS = [
   "adds", "increases", "relocates", "awards", "qualifies", "targets", "eyes",
   "commits", "secures", "raises", "signs", "develops", "establishes",
   "upgrades", "doubles", "boosts", "accelerates", "moves", "enters", "forms",
-  "completes", "begins", "breaks ground", "will invest", "will build",
+  "completes", "begins", "reshapes", "reshape", "pools", "pool", "collaborates", "teams up", "joins", "breaks ground", "will invest", "will build",
   "to invest", "to build", "to open", "to expand", "is investing",
   "is building", "is opening", "is expanding"
 ];
 
 export function extractCompany(title, dynamicCompanies = []) {
+  return extractCompanies(title, dynamicCompanies)[0] || { name: null, confidence: 0 };
+}
+
+export function extractCompanies(title, dynamicCompanies = []) {
   const original = clean(title);
   const headline = original.replace(/\s[-–—|:]\s.*$/, "").trim();
 
-  if (!headline) return { name: null, confidence: 0 };
-  if (BAD_PHRASES.some((pattern) => pattern.test(original))) return { name: null, confidence: 0 };
-  if (startsWithBadWord(headline)) return { name: null, confidence: 0 };
+  if (!headline) return [];
+  if (BAD_PHRASES.some((pattern) => pattern.test(original))) return [];
+  if (startsWithBadWord(headline)) return [];
 
-  const configured = matchConfiguredCompany(original, dynamicCompanies);
-  if (configured) return { name: configured, confidence: 0.995 };
+  const matches = [];
 
-  const known = matchKnownCompany(original);
-  if (known) return { name: known, confidence: 0.99 };
-
-  const explicit = extractLeadingCompanyBeforeVerb(headline);
-  if (explicit) return explicit;
-
-  const afterPreposition = headline.match(
-    /(?:by|at|for|with)\s+([A-Z][A-Za-z0-9&.'\-]*(?:\s+[A-Z][A-Za-z0-9&.'\-]*){0,3})(?:\s|$)/
-  );
-
-  if (afterPreposition) {
-    const candidate = sanitizeCompany(afterPreposition[1]);
-    const quality = scoreCandidate(candidate, "preposition");
-    if (quality >= 0.84) return { name: candidate, confidence: quality };
+  for (const company of matchAllConfiguredCompanies(original, dynamicCompanies)) {
+    addEntity(matches, company, 0.995);
   }
 
-  return { name: null, confidence: 0 };
+  for (const company of matchAllKnownCompanies(original)) {
+    addEntity(matches, company, 0.99);
+  }
+
+  for (const entity of extractLeadingCompaniesBeforeVerb(headline)) {
+    addEntity(matches, entity.name, entity.confidence);
+  }
+
+  const afterPrepositions = headline.matchAll(
+    /(?:by|at|for|with|and|alongside)\s+([A-Z][A-Za-z0-9&.'\-]*(?:\s+[A-Z][A-Za-z0-9&.'\-]*){0,3})(?=\s|$|[,;:])/g
+  );
+
+  for (const match of afterPrepositions) {
+    const candidate = sanitizeCompany(match[1]);
+    const quality = scoreCandidate(candidate, "preposition");
+    if (quality >= 0.84) addEntity(matches, candidate, quality);
+  }
+
+  return matches.slice(0, 5);
 }
 
-function extractLeadingCompanyBeforeVerb(headline) {
+function addEntity(output, name, confidence) {
+  const normalized = normalizeCompany(name);
+  if (!normalized || normalized.length < 2) return;
+  if (output.some((entity) => normalizeCompany(entity.name) === normalized)) return;
+  output.push({ name, confidence });
+}
+
+function extractLeadingCompaniesBeforeVerb(headline) {
   const actionPattern = COMPANY_ACTIONS
     .map((action) => action.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"))
     .join("|");
 
-  // Capture the shortest company-like phrase before a corporate action.
-  // Examples:
-  // "Pearl Global Builds..." -> "Pearl Global"
-  // "BeOne Medicines Plans $300M..." -> "BeOne Medicines"
-  // "ABC Group to build a new plant..." -> "ABC Group"
   const pattern = new RegExp(
-    `^(.{2,100}?)\\s+(?:${actionPattern})\\b`,
+    `^(.{2,120}?)\\s+(?:${actionPattern})\\b`,
     "i"
   );
 
   const match = headline.match(pattern);
   if (match) {
-    const candidate = validateLeadingCandidate(match[1]);
-    if (candidate) return candidate;
+    const parts = splitCompanyPhrase(match[1]);
+    const entities = parts
+      .map((part) => validateLeadingCandidate(part))
+      .filter(Boolean);
+
+    if (entities.length) return entities;
   }
 
-  // Secondary fallback: take the opening title-cased phrase before punctuation.
-  // This covers headlines where the action verb is not yet in the catalog.
   const opening = headline.match(
-    /^((?:[A-Z0-9][A-Za-z0-9&.'-]*)(?:\s+[A-Z0-9][A-Za-z0-9&.'-]*){0,3})(?=\s+(?:[a-z$€£]|\d)|\s*[,;:—–-])/
+    /^((?:[A-Z0-9][A-Za-z0-9&.'-]*)(?:\s+(?:and|&|with)\s+|\s+)(?:[A-Z0-9][A-Za-z0-9&.'-]*)(?:\s+[A-Z0-9][A-Za-z0-9&.'-]*){0,3})(?=\s+(?:[a-z$€£]|\d)|\s*[,;:—–-])/i
   );
 
-  if (opening) {
-    const candidate = validateLeadingCandidate(opening[1], 0.04);
-    if (candidate) return candidate;
-  }
+  if (!opening) return [];
 
-  return null;
+  return splitCompanyPhrase(opening[1])
+    .map((part) => validateLeadingCandidate(part, 0.04))
+    .filter(Boolean);
+}
+
+function splitCompanyPhrase(value) {
+  const cleaned = clean(value)
+    .replace(/^(?:the|a|an)\s+/i, "")
+    .replace(/[,:;—–-]+$/, "")
+    .trim();
+
+  const parts = cleaned
+    .split(/\s+(?:and|&|with|alongside|versus|vs\.?)\s+/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return parts.length > 1 ? parts : [cleaned];
 }
 
 function validateLeadingCandidate(value, confidenceBonus = 0.14) {
