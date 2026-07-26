@@ -11,9 +11,11 @@ import { clean, parseGdeltDate, safeDomain, stableId } from "../utils/text.js";
 export async function runPipeline(window) {
   const started = Date.now();
   const raw = await fetchGdelt(window);
-  const events = deduplicateArticles(raw)
-    .map(enrichEvent)
-    .filter((event) => event.score >= 45)
+  const enriched = deduplicateArticles(raw).map(enrichEvent);
+
+  // Keep enough events for persistence and debugging, even when company extraction is conservative.
+  const events = enriched
+    .filter((event) => event.score >= 35)
     .sort((a, b) => b.score - a.score || Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
     .slice(0, 140);
 
@@ -23,7 +25,7 @@ export async function runPipeline(window) {
     generatedAt: new Date().toISOString(),
     elapsedMs: Date.now() - started,
     provider: "GDELT DOC 2.0",
-    methodology: "Modular public-source collection, deterministic classification, entity extraction, deduplication, event scoring and company-level multi-signal correlation.",
+    methodology: "Balanced public-source collection, deterministic classification, entity extraction, deduplication, event scoring and company-level correlation.",
     caveat: "Scores indicate relevance for commercial review, not verified purchase intent or a confirmed RFQ.",
     stats: {
       events: events.length,

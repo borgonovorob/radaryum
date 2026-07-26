@@ -2,14 +2,19 @@ import { normalizeCompany } from "./entity.js";
 import { scoreCompany } from "./scoring.js";
 import { stableId } from "../utils/text.js";
 
+const BAD_COMPANY_NAMES = new Set([
+  "from informality",
+  "egypt wanda"
+]);
+
 export function correlateCompanies(events) {
   const groups = new Map();
 
   for (const event of events) {
-    if (!event.company || event.companyConfidence < 0.70) continue;
+    if (!event.company || event.companyConfidence < 0.60) continue;
 
     const key = normalizeCompany(event.company);
-    if (!key || key.length < 3) continue;
+    if (!key || key.length < 3 || BAD_COMPANY_NAMES.has(key)) continue;
 
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(event);
