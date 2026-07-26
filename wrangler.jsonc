@@ -13,6 +13,14 @@
       "/api/*",
       "/companies",
       "/company/*",
+      "/latest",
+      "/trending",
+      "/countries",
+      "/country/*",
+      "/industries",
+      "/industry/*",
+      "/signals",
+      "/signals/*",
       "/sitemap.xml"
     ]
   },
@@ -22,7 +30,7 @@
     ]
   },
   "vars": {
-    "RADARYUM_VERSION": "6.2.0-structured-data"
+    "RADARYUM_VERSION": "6.3.0-public-intelligence"
   },
   "d1_databases": [
     {

@@ -11,7 +11,11 @@ import {
 } from "./engines/persistence.js";
 import { clamp } from "./utils/text.js";
 import { authenticateRequest, authResponse } from "./auth/clerk.js";
-import { renderCompaniesIndex, renderCompanyPage, renderSitemap } from "./seo/pages.js";
+import {
+  renderCompaniesIndex, renderCompanyPage, renderCountriesIndex, renderCountryPage,
+  renderIndustriesIndex, renderIndustryPage, renderLatestPage, renderSignalsIndex,
+  renderSignalPage, renderSitemap, renderTrendingPage
+} from "./seo/pages.js";
 
 const CACHE_TTL_SECONDS = 300;
 const REFRESHING = new Set();
@@ -25,9 +29,15 @@ export default {
         return apiJson({ ok: true, service: "radaryum", version: env.RADARYUM_VERSION || "6.0.0", authentication: "Clerk production", databaseConfigured: hasDatabase(env), time: new Date().toISOString() });
       }
 
-      if (request.method === "GET" && url.pathname === "/companies") {
-        return renderCompaniesIndex(env);
-      }
+      if (request.method === "GET" && url.pathname === "/companies") return renderCompaniesIndex(env);
+      if (request.method === "GET" && url.pathname === "/latest") return renderLatestPage(env);
+      if (request.method === "GET" && url.pathname === "/trending") return renderTrendingPage(env);
+      if (request.method === "GET" && url.pathname === "/countries") return renderCountriesIndex(env);
+      if (request.method === "GET" && url.pathname.startsWith("/country/")) return renderCountryPage(env, url.pathname.slice(9).replace(/\/+$/, ""));
+      if (request.method === "GET" && url.pathname === "/industries") return renderIndustriesIndex(env);
+      if (request.method === "GET" && url.pathname.startsWith("/industry/")) return renderIndustryPage(env, url.pathname.slice(10).replace(/\/+$/, ""));
+      if (request.method === "GET" && url.pathname === "/signals") return renderSignalsIndex(env);
+      if (request.method === "GET" && url.pathname.startsWith("/signals/")) return renderSignalPage(env, url.pathname.slice(9).replace(/\/+$/, ""));
 
       if (request.method === "GET" && url.pathname === "/sitemap.xml") {
         return renderSitemap(env);
