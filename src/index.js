@@ -29,9 +29,11 @@ export default {
         service: "radaryum",
         version: "4.0.0",
         architecture: "modular-persistent",
-        databaseConfigured: hasDatabase(env),
+        databaseConfigured: Boolean(env.DB),
+        dbType: typeof env.DB,
+        availableBindings: Object.keys(env),
         time: new Date().toISOString()
-      }, 200, 60);
+      }, 200, 0);
     }
 
     return env.ASSETS.fetch(request);
