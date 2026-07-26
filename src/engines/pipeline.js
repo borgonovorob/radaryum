@@ -1,6 +1,6 @@
 import { detectCountry } from "../config/geography.js";
 import { signalLabel } from "../config/signals.js";
-import { fetchGdelt } from "../providers/gdelt.js";
+import { collectSources } from "../collectors/orchestrator.js";
 import { classifySignal } from "./classification.js";
 import { correlateCompanies } from "./correlation.js";
 import { deduplicateArticles } from "./deduplication.js";
@@ -8,25 +8,26 @@ import { extractCompany } from "./entity.js";
 import { scoreEvent } from "./scoring.js";
 import { clean, parseGdeltDate, safeDomain, stableId } from "../utils/text.js";
 
-export async function runPipeline(window) {
+export async function runPipeline(window, env) {
   const started = Date.now();
-  const raw = await fetchGdelt(window);
-  const enriched = deduplicateArticles(raw).map(enrichEvent);
+  const collected = await collectSources(window, env);
+  const enriched = deduplicateArticles(collected.articles).map(enrichEvent);
 
-  // Keep enough events for persistence and debugging, even when company extraction is conservative.
   const events = enriched
     .filter((event) => event.score >= 35)
     .sort((a, b) => b.score - a.score || Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
-    .slice(0, 140);
+    .slice(0, 180);
 
   const companies = correlateCompanies(events);
 
   return {
     generatedAt: new Date().toISOString(),
     elapsedMs: Date.now() - started,
-    provider: "GDELT DOC 2.0",
-    methodology: "Balanced public-source collection, deterministic classification, entity extraction, deduplication, event scoring and company-level correlation.",
+    provider: "Radaryum multi-provider collector",
+    methodology: "Background multi-source collection, deterministic classification, entity extraction, deduplication, event scoring and company-level correlation.",
     caveat: "Scores indicate relevance for commercial review, not verified purchase intent or a confirmed RFQ.",
+    partial: collected.collectors.failed > 0 || collected.collectors.partial > 0,
+    collectors: collected.collectors,
     stats: {
       events: events.length,
       companies: companies.length,
@@ -44,7 +45,10 @@ function enrichEvent(article) {
   const signal = classifySignal(combined, article.requestedSignal);
   const country = detectCountry(combined);
   const publishedAt = parseGdeltDate(article.seendate) || new Date().toISOString();
-  const entity = extractCompany(title);
+  const entity = article.sourceCompany
+    ? { name: article.sourceCompany, confidence: 0.99 }
+    : extractCompany(title);
+
   const scoring = scoreEvent({
     title,
     signal,

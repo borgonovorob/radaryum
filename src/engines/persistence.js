@@ -101,7 +101,6 @@ export async function persistPipeline(env, payload, window = "3d") {
     }
   }
 
-  // D1 batch limits are respected by splitting into chunks.
   for (let index = 0; index < statements.length; index += 75) {
     await env.DB.batch(statements.slice(index, index + 75));
   }
@@ -112,6 +111,63 @@ export async function persistPipeline(env, payload, window = "3d") {
     companies: payload.companies.length,
     statements: statements.length
   };
+}
+
+export async function saveSnapshot(env, window, payload) {
+  if (!hasDatabase(env)) return { stored: false };
+
+  if (!payload?.events?.length && !payload?.companies?.length) {
+    return { stored: false, reason: "Empty snapshots are not published." };
+  }
+
+  const snapshotId = payload.snapshotId || crypto.randomUUID();
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(`
+    INSERT INTO snapshots (
+      snapshot_id, window, created_at, generated_at, status, partial,
+      event_count, company_count, collector_summary_json, payload_json
+    ) VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?)
+  `).bind(
+    snapshotId,
+    window,
+    now,
+    payload.generatedAt || now,
+    payload.partial ? 1 : 0,
+    payload.events?.length || 0,
+    payload.companies?.length || 0,
+    JSON.stringify(payload.collectors || {}),
+    JSON.stringify({ ...payload, snapshotId })
+  ).run();
+
+  await env.DB.prepare(`
+    DELETE FROM snapshots
+    WHERE window = ?
+      AND snapshot_id NOT IN (
+        SELECT snapshot_id
+        FROM snapshots
+        WHERE window = ?
+        ORDER BY created_at DESC
+        LIMIT 20
+      )
+  `).bind(window, window).run();
+
+  return { stored: true, snapshotId };
+}
+
+export async function readLatestSnapshot(env, window) {
+  if (!hasDatabase(env)) return null;
+
+  const row = await env.DB.prepare(`
+    SELECT payload_json
+    FROM snapshots
+    WHERE window = ? AND status = 'ready'
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).bind(window).first();
+
+  if (!row?.payload_json) return null;
+  return safeJson(row.payload_json, null);
 }
 
 export async function readArchive(env, options = {}) {
@@ -159,11 +215,13 @@ export async function readArchive(env, options = {}) {
 export async function readStats(env) {
   if (!hasDatabase(env)) return { configured: false };
 
-  const [events, companies, scans, feedback] = await env.DB.batch([
+  const [events, companies, scans, feedback, snapshots, health] = await env.DB.batch([
     env.DB.prepare("SELECT COUNT(*) AS count, MAX(last_seen_at) AS latest FROM events"),
     env.DB.prepare("SELECT COUNT(*) AS count, MAX(last_seen_at) AS latest FROM companies"),
     env.DB.prepare("SELECT COUNT(*) AS count, MAX(generated_at) AS latest FROM scans"),
-    env.DB.prepare("SELECT COUNT(*) AS count, MAX(created_at) AS latest FROM feedback")
+    env.DB.prepare("SELECT COUNT(*) AS count, MAX(created_at) AS latest FROM feedback"),
+    env.DB.prepare("SELECT COUNT(*) AS count, MAX(created_at) AS latest FROM snapshots"),
+    env.DB.prepare("SELECT status, COUNT(*) AS count FROM source_health GROUP BY status")
   ]);
 
   return {
@@ -171,7 +229,9 @@ export async function readStats(env) {
     events: events.results?.[0] || { count: 0, latest: null },
     companies: companies.results?.[0] || { count: 0, latest: null },
     scans: scans.results?.[0] || { count: 0, latest: null },
-    feedback: feedback.results?.[0] || { count: 0, latest: null }
+    feedback: feedback.results?.[0] || { count: 0, latest: null },
+    snapshots: snapshots.results?.[0] || { count: 0, latest: null },
+    sourceHealth: health.results || []
   };
 }
 

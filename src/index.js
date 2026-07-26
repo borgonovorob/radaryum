@@ -4,14 +4,15 @@ import {
   hasDatabase,
   persistPipeline,
   readArchive,
+  readLatestSnapshot,
   readStats,
-  saveFeedback
+  saveFeedback,
+  saveSnapshot
 } from "./engines/persistence.js";
 import { clamp } from "./utils/text.js";
 
-const SNAPSHOT_VERSION = "v4.4";
-const SNAPSHOT_TTL_SECONDS = 180;
-const inflightScans = new Map();
+const CACHE_TTL_SECONDS = 300;
+const REFRESHING = new Set();
 
 export default {
   async fetch(request, env, ctx) {
@@ -26,38 +27,30 @@ export default {
       if (url.pathname === "/api/feedback" && request.method === "POST") {
         return handleFeedback(request, env);
       }
-
       if (url.pathname === "/api/health") {
-        return noStoreJson({
+        return apiJson({
           ok: true,
           service: "radaryum",
-          version: "4.4.0",
-          architecture: "shared-live-snapshot",
-          snapshotTtlSeconds: SNAPSHOT_TTL_SECONDS,
+          version: "5.0.0",
+          architecture: "background-collectors-persistent-snapshots",
           databaseConfigured: hasDatabase(env),
           time: new Date().toISOString()
         });
       }
 
       if (url.pathname.startsWith("/api/")) {
-        return noStoreJson({
-          error: "API route not found",
-          path: url.pathname,
-          ok: false
-        }, 404);
+        return apiJson({ ok: false, error: "API route not found", path: url.pathname }, 404);
       }
 
       return env.ASSETS.fetch(request);
     } catch (error) {
-      return noStoreJson({
-        error: String(error?.message || error),
-        ok: false
-      }, 500);
+      return apiJson({ ok: false, error: String(error?.message || error) }, 500);
     }
   },
 
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(refreshSnapshot("3d", env));
+    const window = cronWindow(controller.cron);
+    ctx.waitUntil(refreshWindow(window, env));
   }
 };
 
@@ -68,29 +61,23 @@ async function handleCompanies(request, env, ctx) {
   const minScore = clamp(Number(url.searchParams.get("minScore") || 60), 0, 100);
   const forceRefresh = url.searchParams.get("refresh") === "1";
 
-  try {
-    const payload = await getSharedPayload(window, env, ctx, forceRefresh);
-    let companies = Array.isArray(payload.companies) ? payload.companies : [];
+  const payload = await getSnapshot(window, env, ctx, forceRefresh);
+  let companies = Array.isArray(payload.companies) ? payload.companies : [];
 
-    if (country) {
-      companies = companies.filter((company) =>
-        Array.isArray(company.countries) && company.countries.includes(country)
-      );
-    }
-
-    companies = companies.filter((company) => company.score >= minScore);
-
-    return noStoreJson({
-      ...payload,
-      events: undefined,
-      companies,
-      snapshot: snapshotInfo(payload),
-      persistence: { configured: hasDatabase(env) },
-      filters: { window, country, minScore }
-    });
-  } catch (error) {
-    return noStoreJson({ error: String(error?.message || error), ok: false }, 500);
+  if (country) {
+    companies = companies.filter((company) =>
+      Array.isArray(company.countries) && company.countries.includes(country)
+    );
   }
+
+  companies = companies.filter((company) => company.score >= minScore);
+
+  return apiJson({
+    ...payload,
+    events: undefined,
+    companies,
+    filters: { window, country, minScore }
+  });
 }
 
 async function handleEvents(request, env, ctx) {
@@ -101,132 +88,137 @@ async function handleEvents(request, env, ctx) {
   const minScore = clamp(Number(url.searchParams.get("minScore") || 55), 0, 100);
   const forceRefresh = url.searchParams.get("refresh") === "1";
 
-  try {
-    const payload = await getSharedPayload(window, env, ctx, forceRefresh);
-    let events = Array.isArray(payload.events) ? payload.events : [];
+  const payload = await getSnapshot(window, env, ctx, forceRefresh);
+  let events = Array.isArray(payload.events) ? payload.events : [];
 
-    if (signal) events = events.filter((event) => event.signal === signal);
-    if (country) events = events.filter((event) => event.country === country);
-    events = events.filter((event) => event.score >= minScore);
+  if (signal) events = events.filter((event) => event.signal === signal);
+  if (country) events = events.filter((event) => event.country === country);
+  events = events.filter((event) => event.score >= minScore);
 
-    return noStoreJson({
+  return apiJson({
+    ...payload,
+    companies: undefined,
+    events,
+    filters: { window, signal, country, minScore }
+  });
+}
+
+async function getSnapshot(window, env, ctx, forceRefresh) {
+  const cacheKey = snapshotKey(window);
+  const cached = await caches.default.match(cacheKey);
+
+  if (forceRefresh) {
+    scheduleRefresh(window, env, ctx);
+  }
+
+  if (cached) {
+    const payload = await cached.json();
+    return {
       ...payload,
-      companies: undefined,
-      events,
-      snapshot: snapshotInfo(payload),
-      persistence: { configured: hasDatabase(env) },
-      filters: { window, signal, country, minScore }
-    });
+      refresh: {
+        requested: forceRefresh,
+        inProgress: REFRESHING.has(window)
+      }
+    };
+  }
+
+  const stored = await readLatestSnapshot(env, window);
+  if (stored) {
+    await caches.default.put(cacheKey, snapshotResponse(stored));
+    if (forceRefresh) scheduleRefresh(window, env, ctx);
+
+    return {
+      ...stored,
+      refresh: {
+        requested: forceRefresh,
+        inProgress: REFRESHING.has(window)
+      }
+    };
+  }
+
+  // First-run bootstrap only. Normal requests never run collectors.
+  const payload = await refreshWindow(window, env);
+
+  return {
+    ...payload,
+    refresh: {
+      requested: forceRefresh,
+      inProgress: false
+    }
+  };
+}
+
+function scheduleRefresh(window, env, ctx) {
+  if (REFRESHING.has(window)) return;
+  if (ctx) ctx.waitUntil(refreshWindow(window, env));
+}
+
+async function refreshWindow(window, env) {
+  if (REFRESHING.has(window)) {
+    const existing = await readLatestSnapshot(env, window);
+    return existing || emptySnapshot(window, "Refresh already in progress.");
+  }
+
+  REFRESHING.add(window);
+
+  try {
+    const previous = await readLatestSnapshot(env, window);
+    const payload = await runPipeline(window, env);
+
+    if (!payload.events.length && !payload.companies.length) {
+      return previous || emptySnapshot(window, "Collectors returned no publishable results.");
+    }
+
+    const snapshotPayload = {
+      ...payload,
+      snapshotId: crypto.randomUUID(),
+      snapshotWindow: window,
+      snapshotCreatedAt: new Date().toISOString(),
+      snapshotStatus: "ready"
+    };
+
+    await Promise.all([
+      caches.default.put(snapshotKey(window), snapshotResponse(snapshotPayload)),
+      persistPipeline(env, snapshotPayload, window),
+      saveSnapshot(env, window, snapshotPayload)
+    ]);
+
+    return snapshotPayload;
   } catch (error) {
-    return noStoreJson({ error: String(error?.message || error), ok: false }, 500);
+    console.error(`Refresh failed for ${window}`, error);
+    const previous = await readLatestSnapshot(env, window);
+    return previous || emptySnapshot(window, String(error?.message || error));
+  } finally {
+    REFRESHING.delete(window);
   }
 }
 
 async function handleArchive(request, env) {
   const url = new URL(request.url);
+  const archive = await readArchive(env, {
+    limit: url.searchParams.get("limit"),
+    minScore: url.searchParams.get("minScore"),
+    country: url.searchParams.get("country")
+  });
 
-  try {
-    const archive = await readArchive(env, {
-      limit: url.searchParams.get("limit"),
-      minScore: url.searchParams.get("minScore"),
-      country: url.searchParams.get("country")
-    });
-
-    return noStoreJson({
-      generatedAt: new Date().toISOString(),
-      ...archive
-    });
-  } catch (error) {
-    return noStoreJson({ error: String(error?.message || error), ok: false }, 500);
-  }
+  return apiJson({
+    generatedAt: new Date().toISOString(),
+    ...archive
+  });
 }
 
 async function handleStats(env) {
-  try {
-    return noStoreJson({
-      generatedAt: new Date().toISOString(),
-      ...(await readStats(env))
-    });
-  } catch (error) {
-    return noStoreJson({ error: String(error?.message || error), ok: false }, 500);
-  }
+  return apiJson({
+    generatedAt: new Date().toISOString(),
+    ...(await readStats(env))
+  });
 }
 
 async function handleFeedback(request, env) {
   try {
-    const input = await request.json();
-    return noStoreJson(await saveFeedback(env, input));
+    return apiJson(await saveFeedback(env, await request.json()));
   } catch (error) {
-    return noStoreJson({ error: String(error?.message || error) }, 400);
-  }
-}
-
-async function getSharedPayload(window, env, ctx, forceRefresh = false) {
-  const cacheKey = snapshotKey(window);
-
-  if (!forceRefresh) {
-    const cached = await caches.default.match(cacheKey);
-    if (cached) return cached.json();
-  }
-
-  if (inflightScans.has(window)) {
-    return inflightScans.get(window);
-  }
-
-  const promise = createSnapshot(window, env, ctx, cacheKey);
-  inflightScans.set(window, promise);
-
-  try {
-    return await promise;
-  } finally {
-    inflightScans.delete(window);
-  }
-}
-
-async function createSnapshot(window, env, ctx, cacheKey) {
-  const started = Date.now();
-  const payload = await runPipeline(window);
-
-  const snapshotPayload = {
-    ...payload,
-    elapsedMs: Date.now() - started,
-    snapshotId: `${SNAPSHOT_VERSION}-${window}-${Date.now()}`,
-    snapshotCreatedAt: new Date().toISOString(),
-    snapshotWindow: window
-  };
-
-  await caches.default.put(cacheKey, snapshotResponse(snapshotPayload));
-
-  if (hasDatabase(env) && ctx) {
-    ctx.waitUntil(
-      persistPipeline(env.DB, snapshotPayload).catch((error) => {
-        console.error("D1 persistence failed", error);
-      })
-    );
-  }
-
-  return snapshotPayload;
-}
-
-async function refreshSnapshot(window, env) {
-  try {
-    const started = Date.now();
-    const payload = await runPipeline(window);
-
-    const snapshotPayload = {
-      ...payload,
-      elapsedMs: Date.now() - started,
-      snapshotId: `${SNAPSHOT_VERSION}-${window}-${Date.now()}`,
-      snapshotCreatedAt: new Date().toISOString(),
-      snapshotWindow: window
-    };
-
-    await Promise.all([
-      caches.default.put(snapshotKey(window), snapshotResponse(snapshotPayload)),
-      hasDatabase(env) ? persistPipeline(env.DB, snapshotPayload) : Promise.resolve()
-    ]);
-  } catch (error) {
-    console.error("Scheduled refresh failed", error);
+    return apiJson({ error: String(error?.message || error) }, 400);
   }
 }
 
@@ -234,25 +226,47 @@ function snapshotResponse(payload) {
   return new Response(JSON.stringify(payload), {
     headers: {
       "content-type": "application/json; charset=utf-8",
-      "cache-control": `public, max-age=${SNAPSHOT_TTL_SECONDS}`
+      "cache-control": `public, max-age=${CACHE_TTL_SECONDS}`
     }
   });
 }
 
 function snapshotKey(window) {
-  return new Request(
-    `https://radaryum.internal/live-snapshot/${SNAPSHOT_VERSION}/${window}`
-  );
+  return new Request(`https://radaryum.internal/v5/snapshot/${window}`);
 }
 
-function snapshotInfo(payload) {
+function emptySnapshot(window, reason) {
   return {
-    id: payload.snapshotId,
-    createdAt: payload.snapshotCreatedAt,
-    window: payload.snapshotWindow,
-    ttlSeconds: SNAPSHOT_TTL_SECONDS,
-    shared: true
+    generatedAt: new Date().toISOString(),
+    snapshotId: null,
+    snapshotWindow: window,
+    snapshotCreatedAt: null,
+    snapshotStatus: "unavailable",
+    partial: true,
+    caveat: reason,
+    collectors: {
+      total: 0,
+      successful: 0,
+      partial: 0,
+      failed: 0,
+      itemsFound: 0,
+      providers: []
+    },
+    stats: {
+      events: 0,
+      companies: 0,
+      multiSignalCompanies: 0
+    },
+    events: [],
+    companies: []
   };
+}
+
+function cronWindow(cron) {
+  if (cron === "*/15 * * * *") return "3d";
+  if (cron === "7,37 * * * *") return "24h";
+  if (cron === "23 * * * *") return "7d";
+  return "3d";
 }
 
 function normalizeWindow(value) {
@@ -263,7 +277,7 @@ function normalizeSignal(value) {
   return SIGNAL_GROUPS.some((group) => group.id === value) ? value : "";
 }
 
-function noStoreJson(payload, status = 200) {
+function apiJson(payload, status = 200) {
   return new Response(JSON.stringify(payload, null, 2), {
     status,
     headers: {
