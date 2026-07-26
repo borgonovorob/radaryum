@@ -165,8 +165,26 @@ async function refreshWindow(window, env) {
     const previous = await readLatestSnapshot(env, window);
     const payload = await runPipeline(window, env);
 
-    if (!payload.events.length && !payload.companies.length) {
-      return previous || emptySnapshot(window, "Collectors returned no publishable results.");
+    const quality = evaluateSnapshotQuality(previous, payload);
+
+    if (!quality.publish) {
+      console.warn(`Snapshot rejected for ${window}: ${quality.reason}`);
+
+      if (previous) {
+        return {
+          ...previous,
+          refreshRejected: true,
+          refreshRejectedAt: new Date().toISOString(),
+          refreshRejectedReason: quality.reason,
+          rejectedCandidateStats: {
+            events: payload.events?.length || 0,
+            companies: payload.companies?.length || 0,
+            collectors: payload.collectors || null
+          }
+        };
+      }
+
+      return emptySnapshot(window, quality.reason);
     }
 
     const snapshotPayload = {
@@ -174,7 +192,11 @@ async function refreshWindow(window, env) {
       snapshotId: crypto.randomUUID(),
       snapshotWindow: window,
       snapshotCreatedAt: new Date().toISOString(),
-      snapshotStatus: "ready"
+      snapshotStatus: "ready",
+      qualityGate: {
+        passed: true,
+        reason: quality.reason
+      }
     };
 
     await Promise.all([
@@ -259,6 +281,70 @@ function emptySnapshot(window, reason) {
     },
     events: [],
     companies: []
+  };
+}
+
+
+function evaluateSnapshotQuality(previous, candidate) {
+  const newEvents = candidate?.events?.length || 0;
+  const newCompanies = candidate?.companies?.length || 0;
+  const collectors = candidate?.collectors || {};
+  const providers = Array.isArray(collectors.providers) ? collectors.providers : [];
+
+  if (newEvents === 0 && newCompanies === 0) {
+    return {
+      publish: false,
+      reason: "Collectors returned no publishable events or companies."
+    };
+  }
+
+  const activeProviders = providers.filter((provider) => (provider.itemsFound || 0) > 0);
+  const primaryItems = providers
+    .filter((provider) => ["gdelt", "google-news"].includes(provider.provider))
+    .reduce((sum, provider) => sum + (provider.itemsFound || 0), 0);
+
+  if (previous) {
+    const previousEvents = previous?.events?.length || previous?.stats?.events || 0;
+    const previousCompanies = previous?.companies?.length || previous?.stats?.companies || 0;
+
+    if (previousEvents >= 10) {
+      const minimumEvents = Math.max(5, Math.ceil(previousEvents * 0.30));
+
+      if (newEvents < minimumEvents) {
+        return {
+          publish: false,
+          reason: `Candidate has ${newEvents} events; minimum required is ${minimumEvents} versus previous ${previousEvents}.`
+        };
+      }
+    }
+
+    if (previousCompanies >= 4 && newCompanies === 0) {
+      return {
+        publish: false,
+        reason: `Candidate has no companies versus previous ${previousCompanies}.`
+      };
+    }
+  }
+
+  if (activeProviders.length <= 1 && primaryItems === 0 && newEvents < 10) {
+    return {
+      publish: false,
+      reason: "Only one secondary provider contributed and the primary news collectors returned zero."
+    };
+  }
+
+  if ((collectors.failed || 0) >= Math.max(2, Math.ceil((collectors.total || 0) / 2))) {
+    return {
+      publish: false,
+      reason: "At least half of the configured collectors failed."
+    };
+  }
+
+  return {
+    publish: true,
+    reason: previous
+      ? "Candidate passed relative quality checks against the previous snapshot."
+      : "Initial snapshot contains publishable data."
   };
 }
 
