@@ -32,8 +32,7 @@ async function load(){
   }
 
   try{
-    const r=await fetch(endpoint,{cache:"no-store",signal:controller.signal});
-    const d=await r.json();if(!r.ok)throw new Error(d.error||"Request failed");
+    const d=await apiJson(endpoint,{cache:"no-store",signal:controller.signal});
 
     let items;
     if(view==="companies"){
@@ -56,6 +55,26 @@ async function load(){
     q("#error").hidden=false;q("#error").textContent=`${e.message} Please retry shortly.`;
     q("#list").innerHTML='<div class="empty">No results can be displayed until the service responds.</div>';
   }finally{q("#refresh").disabled=false;}
+}
+
+
+async function apiJson(endpoint,options){
+  const r=await fetch(endpoint,options);
+  const text=await r.text();
+
+  if(!text || !text.trim()){
+    throw new Error(`Empty API response from ${endpoint}`);
+  }
+
+  let d;
+  try{
+    d=JSON.parse(text);
+  }catch(e){
+    throw new Error(`Invalid JSON from API. Status ${r.status}. Response starts: ${text.slice(0,120)}`);
+  }
+
+  if(!r.ok)throw new Error(d.error||`Request failed with status ${r.status}`);
+  return d;
 }
 
 function updateMetrics(items,generatedAt){
