@@ -30,7 +30,7 @@
     ]
   },
   "vars": {
-    "RADARYUM_VERSION": "6.3.0-public-intelligence"
+    "RADARYUM_VERSION": "6.3.1-clarity"
   },
   "d1_databases": [
     {
