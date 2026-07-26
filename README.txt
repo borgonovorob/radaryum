@@ -1,18 +1,13 @@
-Radaryum Sprint 3 — Clerk Production Authentication
+Radaryum Sprint 3 — Clerk UI initialization fix
 
-Replace these files in GitHub:
-- src/index.js
-- src/auth/clerk.js
-- public/index.html
-- public/app.js
-- public/styles.css
+Replace in GitHub:
+public/app.js
 
-Production Clerk configuration included:
-- Frontend API: https://clerk.radaryum.com
-- Publishable key: pk_live_Y2xlcmsucmFkYXJ5dW0uY29tJA
-- Production JWT public key
+Cause:
+ClerkJS loaded, but the Clerk UI bundle was not passed to Clerk.load().
+Therefore openSignIn() and openSignUp() could not render the authentication modal.
 
-No Clerk secret key is included.
+Fix:
+Clerk.load({ ui: { ClerkUI: window.__internal_ClerkUICtor } })
+
 No D1 migration is required.
-
-Important: keep all other current project files unchanged, including the latest multi-company entity, pipeline, correlation and persistence files.
