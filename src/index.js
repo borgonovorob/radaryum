@@ -10,7 +10,7 @@ import {
 import { failure, json } from "./utils/http.js";
 import { clamp } from "./utils/text.js";
 
-const CACHE_KEY = new Request("https://radaryum.internal/api/correlated?window=3d");
+const CACHE_KEY = new Request("https://radaryum.internal/api/correlated?window=3d&engine=v4.1g");
 
 export default {
   async fetch(request, env, ctx) {
@@ -29,11 +29,9 @@ export default {
         service: "radaryum",
         version: "4.0.0",
         architecture: "modular-persistent",
-        databaseConfigured: Boolean(env.DB),
-        dbType: typeof env.DB,
-        availableBindings: Object.keys(env),
+        databaseConfigured: hasDatabase(env),
         time: new Date().toISOString()
-      }, 200, 0);
+      }, 200, 60);
     }
 
     return env.ASSETS.fetch(request);
