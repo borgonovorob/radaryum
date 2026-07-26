@@ -1,5 +1,5 @@
 const q=s=>document.querySelector(s);
-let view="companies",controller=null,forceNextRefresh=false;
+let view="companies",controller=null,forceNextRefresh=false,refreshing=false;
 
 document.querySelectorAll("[data-view]").forEach(btn=>btn.addEventListener("click",()=>{
   view=btn.dataset.view;
@@ -10,7 +10,31 @@ document.querySelectorAll("[data-view]").forEach(btn=>btn.addEventListener("clic
 }));
 
 ["country","window","minScore","signal"].forEach(id=>q(`#${id}`).addEventListener("change",load));
-q("#refresh").addEventListener("click",()=>{forceNextRefresh=true;load();});
+
+q("#refresh").addEventListener("click",async()=>{
+  if(refreshing)return;
+
+  refreshing=true;
+  forceNextRefresh=true;
+
+  const button=q("#refresh");
+  button.disabled=true;
+  button.textContent="Refreshing…";
+
+  try{
+    await load();
+
+    button.textContent="Collecting signals…";
+    await new Promise(resolve=>setTimeout(resolve,15000));
+
+    button.textContent="Loading results…";
+    await load();
+  }finally{
+    refreshing=false;
+    button.disabled=false;
+    button.textContent="Refresh live";
+  }
+});
 
 async function load(){
   controller?.abort();controller=new AbortController();
@@ -51,7 +75,9 @@ async function load(){
     if(e.name==="AbortError")return;
     q("#error").hidden=false;q("#error").textContent=`${e.message} Please retry shortly.`;
     q("#list").innerHTML='<div class="empty">No results can be displayed until the service responds.</div>';
-  }finally{q("#refresh").disabled=false;}
+  }finally{
+    if(!refreshing)q("#refresh").disabled=false;
+  }
 }
 
 async function apiJson(endpoint,options){
