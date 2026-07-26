@@ -104,56 +104,47 @@ async function handleEvents(request, env, ctx) {
 }
 
 async function getSnapshot(window, env, ctx, forceRefresh) {
-  const cacheKey = snapshotKey(window);
+  const canonicalWindow = "7d";
+  const cacheKey = snapshotKey(canonicalWindow);
   const cached = await caches.default.match(cacheKey);
 
-  if (forceRefresh) {
-    scheduleRefresh(window, env, ctx);
-  }
+  if (forceRefresh) scheduleRefresh(canonicalWindow, env, ctx);
 
   if (cached) {
     const payload = await cached.json();
-    return {
-      ...payload,
-      refresh: {
-        requested: forceRefresh,
-        inProgress: REFRESHING.has(window)
-      }
-    };
+    return deriveWindowPayload(payload, window, {
+      requested: forceRefresh,
+      inProgress: REFRESHING.has(canonicalWindow)
+    });
   }
 
-  const stored = await readLatestSnapshot(env, window);
+  const stored = await readLatestSnapshot(env, canonicalWindow);
   if (stored) {
     await caches.default.put(cacheKey, snapshotResponse(stored));
-    if (forceRefresh) scheduleRefresh(window, env, ctx);
+    if (forceRefresh) scheduleRefresh(canonicalWindow, env, ctx);
 
-    return {
-      ...stored,
-      refresh: {
-        requested: forceRefresh,
-        inProgress: REFRESHING.has(window)
-      }
-    };
+    return deriveWindowPayload(stored, window, {
+      requested: forceRefresh,
+      inProgress: REFRESHING.has(canonicalWindow)
+    });
   }
 
-  // First-run bootstrap only. Normal requests never run collectors.
-  const payload = await refreshWindow(window, env);
-
-  return {
-    ...payload,
-    refresh: {
-      requested: forceRefresh,
-      inProgress: false
-    }
-  };
+  // First-run bootstrap only. All visible windows derive from one canonical 7-day collection.
+  const payload = await refreshWindow(canonicalWindow, env);
+  return deriveWindowPayload(payload, window, {
+    requested: forceRefresh,
+    inProgress: false
+  });
 }
 
-function scheduleRefresh(window, env, ctx) {
-  if (REFRESHING.has(window)) return;
-  if (ctx) ctx.waitUntil(refreshWindow(window, env));
+function scheduleRefresh(_window, env, ctx) {
+  const canonicalWindow = "7d";
+  if (REFRESHING.has(canonicalWindow)) return;
+  if (ctx) ctx.waitUntil(refreshWindow(canonicalWindow, env));
 }
 
-async function refreshWindow(window, env) {
+async function refreshWindow(_window, env) {
+  const window = "7d";
   if (REFRESHING.has(window)) {
     const existing = await readLatestSnapshot(env, window);
     return existing || emptySnapshot(window, "Refresh already in progress.");
@@ -285,6 +276,75 @@ function emptySnapshot(window, reason) {
 }
 
 
+function deriveWindowPayload(payload, requestedWindow, refresh) {
+  const window = normalizeWindow(requestedWindow);
+  const cutoff = windowCutoff(window);
+  const events = (Array.isArray(payload?.events) ? payload.events : [])
+    .filter((event) => eventIsInsideWindow(event, cutoff));
+
+  const companies = (Array.isArray(payload?.companies) ? payload.companies : [])
+    .map((company) => deriveCompanyWindow(company, cutoff, window))
+    .filter(Boolean);
+
+  return {
+    ...payload,
+    snapshotWindow: window,
+    canonicalSnapshotWindow: "7d",
+    events,
+    companies,
+    stats: {
+      ...(payload?.stats || {}),
+      events: events.length,
+      companies: companies.length,
+      multiSignalCompanies: companies.filter((company) => (company.signalCount || 0) >= 2).length
+    },
+    refresh
+  };
+}
+
+function deriveCompanyWindow(company, cutoff, window) {
+  const originalTimeline = Array.isArray(company?.timeline) ? company.timeline : [];
+  const timeline = originalTimeline.filter((event) => eventIsInsideWindow(event, cutoff));
+
+  if (!timeline.length) {
+    return window === "7d" && !originalTimeline.length ? company : null;
+  }
+
+  const signals = [...new Set(timeline.map((event) => event.signal).filter(Boolean))];
+  const countries = [...new Set(timeline.map((event) => event.country).filter(Boolean))];
+  const domains = [...new Set(timeline.map((event) => event.domain).filter(Boolean))];
+
+  return {
+    ...company,
+    timeline,
+    eventCount: timeline.length,
+    signalCount: signals.length || company.signalCount || 0,
+    sourceCount: domains.length,
+    signals: signals.length ? signals : company.signals,
+    countries: countries.length ? countries : company.countries
+  };
+}
+
+function eventIsInsideWindow(event, cutoff) {
+  const value = event?.publishedAt || event?.published_at || event?.seendate;
+  const date = parseEventDate(value);
+  return date ? date >= cutoff : false;
+}
+
+function parseEventDate(value) {
+  if (!value) return null;
+  const compact = String(value).match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  const date = compact
+    ? new Date(`${compact[1]}-${compact[2]}-${compact[3]}T${compact[4]}:${compact[5]}:${compact[6]}Z`)
+    : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function windowCutoff(window) {
+  const hours = window === "24h" ? 24 : window === "3d" ? 72 : 168;
+  return new Date(Date.now() - hours * 60 * 60 * 1000);
+}
+
 function evaluateSnapshotQuality(previous, candidate) {
   const newEvents = candidate?.events?.length || 0;
   const newCompanies = candidate?.companies?.length || 0;
@@ -348,11 +408,8 @@ function evaluateSnapshotQuality(previous, candidate) {
   };
 }
 
-function cronWindow(cron) {
-  if (cron === "*/15 * * * *") return "3d";
-  if (cron === "7,37 * * * *") return "24h";
-  if (cron === "23 * * * *") return "7d";
-  return "3d";
+function cronWindow(_cron) {
+  return "7d";
 }
 
 function normalizeWindow(value) {
