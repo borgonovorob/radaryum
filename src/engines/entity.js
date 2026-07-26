@@ -5,7 +5,8 @@ const COMPANY_SUFFIXES = /\b(incorporated|corporation|corp|company|co|limited|lt
 const BAD_START_WORDS = new Set([
   "from", "via", "after", "before", "inside", "outside", "how", "why", "what",
   "when", "where", "this", "these", "those", "the", "a", "an", "our", "their",
-  "your", "his", "her", "its", "latest", "breaking", "analysis", "report"
+  "your", "his", "her", "its", "it", "latest", "breaking", "analysis", "report",
+  "china", "mexico", "egypt", "india", "global", "new", "first"
 ]);
 
 const BAD_PHRASES = [
@@ -15,20 +16,27 @@ const BAD_PHRASES = [
   /\boil field\b/i,
   /\bmarket report\b/i,
   /\bindustry report\b/i,
+  /\bwhat it means\b/i,
+  /\bit means\b/i,
+  /\brecord trade surplus\b/i,
+  /\bthailand economy\b/i,
   /\bpolicy\b/i,
-  /\bgovernment\b/i
+  /\bgovernment\b/i,
+  /\bminister\b/i
 ];
 
-const GEO_PREFIXES = new Set([
-  "egypt", "mexico", "china", "india", "canada", "germany", "france", "italy",
-  "romania", "poland", "japan", "korea", "brazil", "spain", "turkey", "uae",
-  "united", "american", "european", "asian", "africa", "african", "saudi"
+const GENERIC_ACRONYMS = new Set([
+  "CPU", "GPU", "AI", "ML", "IoT", "EV", "ICE", "ERP", "CRM", "API", "SaaS",
+  "OEM", "ODM", "EMS", "PCB", "PCBA", "SMT", "CNC", "CAD", "CAM", "CAGR",
+  "GDP", "IPO", "M&A", "R&D", "ESG", "CO2", "USB", "LED", "LCD", "OLED",
+  "HVAC", "BMS", "RFQ", "RFI", "PO", "MOQ"
 ]);
 
 const NON_COMPANY_WORDS = new Set([
   "deep", "gas", "well", "wells", "oil", "field", "pipeline", "project", "terminal",
   "mine", "mining", "copper", "gold", "silver", "lithium", "report", "market",
-  "industry", "sector", "informality", "economy", "government", "minister", "policy"
+  "industry", "sector", "informality", "economy", "government", "minister", "policy",
+  "means", "record", "surplus", "trade", "tariff", "inflation", "export", "import"
 ]);
 
 const KNOWN_COMPANIES = [
@@ -59,11 +67,13 @@ export function extractCompany(title) {
   if (startsWithBadWord(headline)) return { name: null, confidence: 0 };
 
   const known = matchKnownCompany(original);
-  if (known) return { name: known, confidence: 0.95 };
+  if (known) return { name: known, confidence: 0.98 };
 
   const verbPattern = COMPANY_VERBS.join("|");
+
+  // Only trust first-position extraction when headline follows a strong corporate action pattern.
   const explicitPattern = new RegExp(
-    `^([A-Z][A-Za-z0-9&.'\\-]*(?:\\s+[A-Z][A-Za-z0-9&.'\\-]*){0,4})\\s+(?:${verbPattern}|to\\b)`,
+    `^([A-Z][A-Za-z0-9&.'\\-]*(?:\\s+[A-Z][A-Za-z0-9&.'\\-]*){0,3})\\s+(?:${verbPattern})\\b`,
     "i"
   );
 
@@ -71,9 +81,10 @@ export function extractCompany(title) {
   if (explicit) {
     const candidate = sanitizeCompany(explicit[1]);
     const quality = scoreCandidate(candidate, "explicit");
-    if (quality >= 0.64) return { name: candidate, confidence: quality };
+    if (quality >= 0.78) return { name: candidate, confidence: quality };
   }
 
+  // For "by/with/at/for X", require a corporate signal or known company. This avoids phrases.
   const afterPreposition = headline.match(
     /(?:by|at|for|with)\s+([A-Z][A-Za-z0-9&.'\-]*(?:\s+[A-Z][A-Za-z0-9&.'\-]*){0,3})(?:\s|$)/
   );
@@ -81,16 +92,10 @@ export function extractCompany(title) {
   if (afterPreposition) {
     const candidate = sanitizeCompany(afterPreposition[1]);
     const quality = scoreCandidate(candidate, "preposition");
-    if (quality >= 0.68) return { name: candidate, confidence: quality };
+    if (quality >= 0.82) return { name: candidate, confidence: quality };
   }
 
-  const acronym = headline.match(/^([A-Z][A-Z0-9&.'\-]{2,}(?:\s+[A-Z][A-Z0-9&.'\-]{2,}){0,3})\b/);
-  if (acronym) {
-    const candidate = sanitizeCompany(acronym[1]);
-    const quality = scoreCandidate(candidate, "acronym");
-    if (quality >= 0.70) return { name: candidate, confidence: quality };
-  }
-
+  // Acronyms are accepted only if they are known companies; otherwise too many false positives.
   return { name: null, confidence: 0 };
 }
 
@@ -136,29 +141,27 @@ function scoreCandidate(candidate, source) {
   const lowerWords = words.map((word) => word.toLowerCase());
 
   if (BAD_START_WORDS.has(lowerWords[0])) return 0;
-  if (GEO_PREFIXES.has(lowerWords[0]) && words.length > 1 && !hasCorporateSignal(words)) return 0;
+  if (words.length === 1 && GENERIC_ACRONYMS.has(words[0])) return 0;
   if (lowerWords.some((word) => NON_COMPANY_WORDS.has(word)) && !hasCorporateSignal(words)) return 0;
 
-  let score = 0.52;
+  let score = 0.48;
 
-  if (source === "explicit") score += 0.14;
-  if (source === "preposition") score += 0.08;
-  if (source === "acronym") score += 0.18;
+  if (source === "explicit") score += 0.18;
+  if (source === "preposition") score += 0.10;
 
-  if (hasCorporateSignal(words)) score += 0.18;
+  if (hasCorporateSignal(words)) score += 0.26;
+  else score -= 0.10;
 
-  if (words.length === 1) {
-    if (/^[A-Z0-9&.'-]{3,}$/.test(words[0])) score += 0.08;
-    else score -= 0.15;
-  }
+  // Single-word unknown names are too risky. Known companies are already handled earlier.
+  if (words.length === 1) score -= 0.35;
 
-  if (words.length >= 2 && words.length <= 3) score += 0.06;
-  if (words.length > 4) score -= 0.12;
+  if (words.length >= 2 && words.length <= 3) score += 0.08;
+  if (words.length > 3) score -= 0.16;
 
   const properCaseWords = words.filter((word) => /^[A-Z][a-z0-9&.'-]+$/.test(word)).length;
   const acronymWords = words.filter((word) => /^[A-Z0-9&.'-]{2,}$/.test(word)).length;
 
-  if (properCaseWords + acronymWords === words.length) score += 0.06;
+  if (properCaseWords + acronymWords === words.length) score += 0.05;
 
   return Math.max(0, Math.min(0.99, score));
 }
