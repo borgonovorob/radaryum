@@ -72,14 +72,21 @@ function renderCompanies(items,archived){
   <article class="company-card">
     <div class="company-head">
       <div class="score">${c.score}<span>${archived?"ARCHIVED SCORE":"COMPANY SCORE"}</span></div>
-      <div><h2>${esc(c.company)}</h2><div class="meta">${c.eventCount} events · ${c.signalCount} signal types · ${c.sourceCount} source domains${archived?` · first seen ${date(c.firstSeenAt)}`:""}</div>
-      <div class="chips">${(c.signals||[]).map(s=>`<span class="chip">${esc(label(s))}</span>`).join("")}${(c.countries||[]).map(x=>`<span class="chip">${esc(x)}</span>`).join("")}</div>
-      <div class="reason">${(c.reasons||[]).map(r=>`<div>• ${esc(r)}</div>`).join("")}</div></div>
-      <div><span class="confidence">${esc(c.confidence)} confidence</span><div class="company-action"><b>Suggested action</b><br>${esc(c.suggestedAction||"Review and verify.")}</div>
-      <div class="feedback"><button onclick="feedback('company','${attr(c.id)}','useful')">Useful</button><button onclick="feedback('company','${attr(c.id)}','review')">Review</button><button onclick="feedback('company','${attr(c.id)}','dismiss')">Dismiss</button></div></div>
+      <div>
+        <h2>${esc(c.company)}</h2>
+        <div class="meta">${c.eventCount} events · ${c.signalCount} signal types · ${c.sourceCount} source domains${archived?` · first seen ${date(c.firstSeenAt)}`:""}</div>
+        <div class="chips">${(c.signals||[]).map(s=>`<span class="chip">${esc(label(s))}</span>`).join("")}${(c.countries||[]).map(x=>`<span class="chip">${esc(x)}</span>`).join("")}</div>
+        <div class="reason">${(c.reasons||[]).map(r=>`<div>• ${esc(r)}</div>`).join("")}</div>
+        ${companySourceSummary(c)}
+      </div>
+      <div>
+        <span class="confidence">${esc(c.confidence)} confidence</span>
+        <div class="company-action"><b>Suggested action</b><br>${esc(c.suggestedAction||"Review and verify.")}</div>
+        ${primarySourceButton(c)}
+        <div class="feedback"><button onclick="feedback('company','${attr(c.id)}','useful')">Useful</button><button onclick="feedback('company','${attr(c.id)}','review')">Review</button><button onclick="feedback('company','${attr(c.id)}','dismiss')">Dismiss</button></div>
+      </div>
     </div>
-    ${!archived?`<div class="timeline">${(c.timeline||[]).map(t=>`
-      <div class="timeline-row"><time>${date(t.publishedAt)}</time><span class="chip">${esc(t.signalLabel)}</span><a href="${attr(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a><span class="domain">${esc(t.domain)}</span></div>`).join("")}</div>`:""}
+    ${companyTimeline(c)}
   </article>`).join("");
 }
 
@@ -89,9 +96,47 @@ function renderEvents(items,archived){
   <article class="event-card"><div class="score">${x.score}<span>EVENT SCORE</span></div>
   <div><h2>${esc(x.title)}</h2><div class="meta">${esc(x.company||"Company undetected")} · ${esc(x.country)} · ${date(x.publishedAt)}</div>
   <div class="chips"><span class="chip">${esc(x.signalLabel)}</span><span class="chip">${esc(x.domain)}</span></div>
+  <div class="source-box">
+    <div><b>Source:</b> ${esc(x.provider||"GDELT DOC 2.0")}</div>
+    <div><b>Published:</b> ${date(x.publishedAt)}</div>
+    <div><b>Domain:</b> ${esc(x.domain||"Source unavailable")}</div>
+  </div>
   <div class="reason">${(x.reasons||[]).map(r=>`<div>• ${esc(r)}</div>`).join("")}</div></div>
   <div><span class="confidence">${esc(x.confidence)} confidence</span><a class="open" href="${attr(x.url)}" target="_blank" rel="noopener">Open source ↗</a>
   <div class="feedback"><button onclick="feedback('event','${attr(x.id)}','useful')">Useful</button><button onclick="feedback('event','${attr(x.id)}','dismiss')">Dismiss</button></div></div></article>`).join("");
+}
+
+function companySourceSummary(c){
+  const timeline=c.timeline||[];
+  if(!timeline.length){
+    return `<div class="source-box"><b>Source:</b> Stored company signal<br><b>Original article:</b> not available in this archive response</div>`;
+  }
+  const first=timeline[0];
+  return `<div class="source-box">
+    <div><b>Source:</b> ${esc(first.provider||"GDELT DOC 2.0")}</div>
+    <div><b>Published:</b> ${date(first.publishedAt)}</div>
+    <div><b>Domain:</b> ${esc(first.domain||"Source unavailable")}</div>
+  </div>`;
+}
+
+function primarySourceButton(c){
+  const first=(c.timeline||[])[0];
+  if(!first?.url)return "";
+  return `<a class="open" href="${attr(first.url)}" target="_blank" rel="noopener">Open source ↗</a>`;
+}
+
+function companyTimeline(c){
+  const timeline=c.timeline||[];
+  if(!timeline.length){
+    return `<div class="timeline"><div class="timeline-row"><span class="domain">No source timeline available in this response.</span></div></div>`;
+  }
+  return `<div class="timeline">${timeline.map(t=>`
+    <div class="timeline-row">
+      <time>${date(t.publishedAt)}</time>
+      <span class="chip">${esc(t.signalLabel||label(t.signal))}</span>
+      <a href="${attr(t.url)}" target="_blank" rel="noopener">${esc(t.title||"Open source")}</a>
+      <span class="domain">${esc(t.domain||"")}</span>
+    </div>`).join("")}</div>`;
 }
 
 async function feedback(targetType,targetId,rating){
