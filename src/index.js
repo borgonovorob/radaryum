@@ -10,6 +10,7 @@ import {
   saveSnapshot
 } from "./engines/persistence.js";
 import { clamp } from "./utils/text.js";
+import { authenticateRequest, authResponse } from "./auth/clerk.js";
 
 const CACHE_TTL_SECONDS = 300;
 const REFRESHING = new Set();
@@ -19,6 +20,16 @@ export default {
     try {
       const url = new URL(request.url);
 
+      if (url.pathname === "/api/health") {
+        return apiJson({ ok: true, service: "radaryum", version: env.RADARYUM_VERSION || "6.0.0", authentication: "Clerk production", databaseConfigured: hasDatabase(env), time: new Date().toISOString() });
+      }
+
+      if (url.pathname.startsWith("/api/")) {
+        const auth = await authenticateRequest(request);
+        if (!auth.ok) return authResponse(auth);
+        if (url.pathname === "/api/auth") return apiJson({ authenticated: true, userId: auth.userId, sessionId: auth.sessionId });
+      }
+
       if (url.pathname === "/api/companies") return handleCompanies(request, env, ctx);
       if (url.pathname === "/api/opportunities") return handleEvents(request, env, ctx);
       if (url.pathname === "/api/events") return handleEvents(request, env, ctx);
@@ -27,17 +38,6 @@ export default {
       if (url.pathname === "/api/feedback" && request.method === "POST") {
         return handleFeedback(request, env);
       }
-      if (url.pathname === "/api/health") {
-        return apiJson({
-          ok: true,
-          service: "radaryum",
-          version: env.RADARYUM_VERSION || "5.8.0",
-          architecture: "accumulated-d1-canonical-window",
-          databaseConfigured: hasDatabase(env),
-          time: new Date().toISOString()
-        });
-      }
-
       if (url.pathname.startsWith("/api/")) {
         return apiJson({ ok: false, error: "API route not found", path: url.pathname }, 404);
       }

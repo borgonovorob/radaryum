@@ -40,12 +40,15 @@
   "description": "Public-source industrial opportunity intelligence for sales, procurement, business development and market intelligence teams."
 }
 </script>
+
+<script defer crossorigin="anonymous" src="https://clerk.radaryum.com/npm/@clerk/ui@1/dist/ui.browser.js" type="text/javascript"></script>
+<script defer crossorigin="anonymous" data-clerk-publishable-key="pk_live_Y2xlcmsucmFkYXJ5dW0uY29tJA" src="https://clerk.radaryum.com/npm/@clerk/clerk-js@6/dist/clerk.browser.js" type="text/javascript"></script>
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <header class="topbar">
   <a class="brand" href="/">RADARYUM</a>
-  <div class="live-status"><i></i><span id="status">Connecting to live sources</span></div>
+  <div class="topbar-right"><div class="live-status"><i></i><span id="status">Authentication loading</span></div><div class="auth-actions"><button id="signInButton" class="auth-button">Sign in</button><button id="signUpButton" class="auth-button auth-button-primary">Create account</button><div id="userButton" hidden></div></div></div>
 </header>
 
 <main>
@@ -64,10 +67,11 @@
   </p>
 
   <div class="hero-actions">
-    <a class="primary-cta" href="#opportunities">Start tracking opportunities</a>
+    <button class="primary-cta" id="startTrackingButton" type="button">Start tracking opportunities</button>
     <span class="trust-line">Public-source intelligence · Updated every 30 minutes</span>
   </div>
 
+  <div id="protectedControls" hidden>
   <div class="view-toggle" id="opportunities">
     <button class="active" data-view="companies">Live company radar</button>
     <button data-view="events">Live event stream</button>
@@ -123,6 +127,7 @@
   </div>
 
   <p class="hero-proof">Real signals. Prioritized companies. Earlier action.</p>
+  </div>
 </section>
 
 <section class="audience" aria-labelledby="audience-title">
@@ -144,6 +149,9 @@
   <span>Scores prioritize signals for human review. They are not probabilities, purchase orders or verified requests for quotation.</span>
 </section>
 
+
+<section id="authGate" class="auth-gate"><p class="kicker">ACCOUNT ACCESS</p><h2>Sign in to open the live opportunity radar.</h2><p>Your account unlocks company intelligence, event signals, the persistent archive, refresh controls and feedback.</p><div class="auth-gate-actions"><button id="gateSignInButton" class="primary-cta" type="button">Sign in</button><button id="gateSignUpButton" class="secondary-cta" type="button">Create an account</button></div></section>
+<div id="protectedResults" hidden>
 <section class="metrics">
   <div><strong id="count">—</strong><span id="countLabel">companies</span></div>
   <div><strong id="multi">—</strong><span>multi-signal</span></div>
@@ -162,6 +170,7 @@
     <div class="loading">Correlating current industrial signals…</div>
   </div>
 </section>
+</div>
 </main>
 
 <footer>

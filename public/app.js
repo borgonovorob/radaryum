@@ -1,5 +1,5 @@
 const q=s=>document.querySelector(s);
-let view="companies",controller=null,forceNextRefresh=false,refreshing=false;
+let view="companies",controller=null,forceNextRefresh=false,refreshing=false,authReady=false;
 
 document.querySelectorAll("[data-view]").forEach(btn=>btn.addEventListener("click",()=>{
   view=btn.dataset.view;
@@ -12,6 +12,7 @@ document.querySelectorAll("[data-view]").forEach(btn=>btn.addEventListener("clic
 ["country","window","minScore","signal"].forEach(id=>q(`#${id}`).addEventListener("change",load));
 
 q("#refresh").addEventListener("click",async()=>{
+  if(!signedIn()){openSignIn();return;}
   if(refreshing)return;
 
   refreshing=true;
@@ -121,8 +122,12 @@ async function load(showLoading=true){
   }
 }
 
-async function apiJson(endpoint,options){
-  const r=await fetch(endpoint,options);
+async function apiJson(endpoint,options={}){
+  const token=await authToken();
+  if(!token)throw new Error("Sign in is required.");
+  const headers=new Headers(options.headers||{});
+  headers.set("authorization",`Bearer ${token}`);
+  const r=await fetch(endpoint,{...options,headers});
   const text=await r.text();
   if(!text.trim())throw new Error(`Empty API response from ${endpoint}`);
   let d;
@@ -181,7 +186,8 @@ function secEvidence(x){
 
 async function feedback(targetType,targetId,rating){
   try{
-    const r=await fetch("/api/feedback",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({targetType,targetId,rating})});
+    const token=await authToken(); if(!token)throw new Error("Sign in is required.");
+    const r=await fetch("/api/feedback",{method:"POST",headers:{"content-type":"application/json",authorization:`Bearer ${token}`},body:JSON.stringify({targetType,targetId,rating})});
     const d=await r.json();if(!r.ok)throw new Error(d.error||"Feedback failed");
     q("#status").textContent=d.stored?"Feedback saved":"Feedback requires D1";
   }catch(e){q("#status").textContent=e.message;}
@@ -204,4 +210,12 @@ function label(s){return({expansion:"Factory expansion",procurement:"Procurement
 function date(v){const d=new Date(v);return Number.isNaN(d.getTime())?"Date unavailable":d.toLocaleString();}
 function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 function attr(v){return esc(v);}
-load();
+
+async function initializeAuthentication(){try{await waitForClerk();await window.Clerk.load();authReady=true;q("#signInButton").onclick=openSignIn;q("#gateSignInButton").onclick=openSignIn;q("#signUpButton").onclick=openSignUp;q("#gateSignUpButton").onclick=openSignUp;q("#startTrackingButton").onclick=()=>signedIn()?q("#opportunities")?.scrollIntoView({behavior:"smooth"}):openSignUp();window.Clerk.addListener(renderAuthentication);await renderAuthentication();}catch(e){console.error(e);q("#status").textContent="Authentication unavailable";}}
+async function renderAuthentication(){const a=signedIn();q("#signInButton").hidden=a;q("#signUpButton").hidden=a;q("#userButton").hidden=!a;q("#authGate").hidden=a;q("#protectedControls").hidden=!a;q("#protectedResults").hidden=!a;if(a){if(!q("#userButton").dataset.mounted){window.Clerk.mountUserButton(q("#userButton"),{afterSignOutUrl:"/"});q("#userButton").dataset.mounted="true";}await load();}else q("#status").textContent="Sign in to access live intelligence";}
+function signedIn(){return Boolean(authReady&&window.Clerk?.user&&window.Clerk?.session);}
+async function authToken(){return signedIn()?window.Clerk.session.getToken():null;}
+function openSignIn(){if(authReady)window.Clerk.openSignIn({redirectUrl:location.href,signUpUrl:location.href});}
+function openSignUp(){if(authReady)window.Clerk.openSignUp({redirectUrl:location.href,signInUrl:location.href});}
+function waitForClerk(){return new Promise((resolve,reject)=>{const start=Date.now(),timer=setInterval(()=>{if(window.Clerk){clearInterval(timer);resolve();}else if(Date.now()-start>15000){clearInterval(timer);reject(new Error("ClerkJS did not load"));}},50);});}
+initializeAuthentication();
