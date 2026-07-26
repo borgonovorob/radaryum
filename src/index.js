@@ -24,7 +24,7 @@ export default {
       return handleFeedback(request, env);
     }
     if (url.pathname === "/api/health") {
-      return json({
+      return noStoreJson({
         ok: true,
         service: "radaryum",
         version: "4.0.0",
@@ -54,7 +54,7 @@ async function handleCompanies(request, env, ctx) {
     if (country) companies = companies.filter((company) => company.countries.includes(country));
     companies = companies.filter((company) => company.score >= minScore);
 
-    return json({
+    return noStoreJson({
       ...payload,
       events: undefined,
       companies,
@@ -80,7 +80,7 @@ async function handleEvents(request, env, ctx) {
     if (country) events = events.filter((event) => event.country === country);
     events = events.filter((event) => event.score >= minScore);
 
-    return json({
+    return noStoreJson({
       ...payload,
       companies: undefined,
       events,
@@ -100,7 +100,7 @@ async function handleArchive(request, env) {
       minScore: url.searchParams.get("minScore"),
       country: url.searchParams.get("country")
     });
-    return json({
+    return noStoreJson({
       generatedAt: new Date().toISOString(),
       ...archive
     }, 200, 120);
@@ -111,7 +111,7 @@ async function handleArchive(request, env) {
 
 async function handleStats(env) {
   try {
-    return json({
+    return noStoreJson({
       generatedAt: new Date().toISOString(),
       ...(await readStats(env))
     }, 200, 60);
@@ -123,30 +123,26 @@ async function handleStats(env) {
 async function handleFeedback(request, env) {
   try {
     const input = await request.json();
-    return json(await saveFeedback(env, input), 200, 0);
+    return noStoreJson(await saveFeedback(env, input), 200, 0);
   } catch (error) {
-    return json({ error: String(error?.message || error) }, 400, 0);
+    return noStoreJson({ error: String(error?.message || error) }, 400, 0);
   }
 }
 
 async function getPayload(window, env, ctx) {
-  if (window !== "3d") {
-    const payload = await runPipeline(window);
-    ctx.waitUntil(persistPipeline(env, payload, window));
-    return payload;
+  // Real live mode: do not use Cloudflare Worker cache for live payloads.
+  // D1 Archive remains persistent, but Live Radar is always freshly collected.
+  const started = Date.now();
+  const payload = await runPipeline(window);
+  payload.elapsedMs = Date.now() - started;
+
+  if (hasDatabase(env) && ctx) {
+    ctx.waitUntil(persistPipeline(env.DB, payload).catch((error) => {
+      console.error("D1 persistence failed", error);
+    }));
   }
 
-  let response = await caches.default.match(CACHE_KEY);
-  if (!response) {
-    const payload = await runPipeline(window);
-    response = json(payload, 200, 900);
-    ctx.waitUntil(Promise.all([
-      caches.default.put(CACHE_KEY, response.clone()),
-      persistPipeline(env, payload, window)
-    ]));
-  }
-
-  return response.json();
+  return payload;
 }
 
 async function refreshAndPersist(env) {
@@ -168,3 +164,17 @@ function normalizeWindow(value) {
 function normalizeSignal(value) {
   return SIGNAL_GROUPS.some((group) => group.id === value) ? value : "";
 }
+
+
+function noStoreJson(payload, status = 200) {
+  return new Response(JSON.stringify(payload, null, 2), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store, no-cache, must-revalidate, max-age=0",
+      "pragma": "no-cache",
+      "expires": "0"
+    }
+  });
+}
+
