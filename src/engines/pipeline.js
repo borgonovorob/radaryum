@@ -49,7 +49,9 @@ export async function runPipeline(window, env) {
 }
 
 function repairStoredCompany(event, configuredCompanies) {
-  if (event?.company || !event?.title) return event;
+  const existing = String(event?.company || "").trim().toLowerCase();
+  const unresolved = !existing || ["company undetected", "undetected", "unknown"].includes(existing);
+  if (!unresolved || !event?.title) return event;
 
   const entity = extractCompany(event.title, configuredCompanies);
   if (!entity.name) return event;

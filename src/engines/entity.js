@@ -124,10 +124,15 @@ const COMPANY_ALIASES = [
   ["LG", ["LG"]]
 ];
 
-const COMPANY_VERBS = [
+const COMPANY_ACTIONS = [
   "opens", "launches", "announces", "plans", "expands", "invests", "starts",
   "seeks", "hires", "acquires", "builds", "unveils", "partners", "selects",
-  "adds", "increases", "relocates", "awards", "qualifies"
+  "adds", "increases", "relocates", "awards", "qualifies", "targets", "eyes",
+  "commits", "secures", "raises", "signs", "develops", "establishes",
+  "upgrades", "doubles", "boosts", "accelerates", "moves", "enters", "forms",
+  "completes", "begins", "breaks ground", "will invest", "will build",
+  "to invest", "to build", "to open", "to expand", "is investing",
+  "is building", "is opening", "is expanding"
 ];
 
 export function extractCompany(title, dynamicCompanies = []) {
@@ -161,28 +166,49 @@ export function extractCompany(title, dynamicCompanies = []) {
 }
 
 function extractLeadingCompanyBeforeVerb(headline) {
-  const verbPattern = COMPANY_VERBS.join("|");
+  const actionPattern = COMPANY_ACTIONS
+    .map((action) => action.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"))
+    .join("|");
 
-  // Stop at the first commercial-action verb instead of allowing the company
-  // capture to greedily consume that verb. Example:
-  // "Pearl Global Builds a Future-Ready..." -> "Pearl Global".
+  // Capture the shortest company-like phrase before a corporate action.
+  // Examples:
+  // "Pearl Global Builds..." -> "Pearl Global"
+  // "BeOne Medicines Plans $300M..." -> "BeOne Medicines"
+  // "ABC Group to build a new plant..." -> "ABC Group"
   const pattern = new RegExp(
-    `^(.{2,80}?)\\s+(${verbPattern})\\b`,
+    `^(.{2,100}?)\\s+(?:${actionPattern})\\b`,
     "i"
   );
 
   const match = headline.match(pattern);
-  if (!match) return null;
+  if (match) {
+    const candidate = validateLeadingCandidate(match[1]);
+    if (candidate) return candidate;
+  }
 
-  const rawCandidate = clean(match[1])
-    .replace(/^(?:the|a|an)\\s+/i, "")
+  // Secondary fallback: take the opening title-cased phrase before punctuation.
+  // This covers headlines where the action verb is not yet in the catalog.
+  const opening = headline.match(
+    /^((?:[A-Z0-9][A-Za-z0-9&.'-]*)(?:\s+[A-Z0-9][A-Za-z0-9&.'-]*){0,3})(?=\s+(?:[a-z$€£]|\d)|\s*[,;:—–-])/
+  );
+
+  if (opening) {
+    const candidate = validateLeadingCandidate(opening[1], 0.04);
+    if (candidate) return candidate;
+  }
+
+  return null;
+}
+
+function validateLeadingCandidate(value, confidenceBonus = 0.14) {
+  const rawCandidate = clean(value)
+    .replace(/^(?:the|a|an)\s+/i, "")
+    .replace(/[,:;—–-]+$/, "")
     .trim();
 
   const words = rawCandidate.split(/\s+/).filter(Boolean);
   if (words.length < 1 || words.length > 4) return null;
 
-  // Require company-like capitalization. This rejects generic sentence
-  // fragments while accepting names such as Pearl Global, 3M and W.W. Grainger.
   const companyLikeWords = words.filter((word) =>
     /^[A-Z0-9][A-Za-z0-9&.'-]*$/.test(word)
   ).length;
@@ -190,15 +216,15 @@ function extractLeadingCompanyBeforeVerb(headline) {
   if (companyLikeWords !== words.length) return null;
 
   const candidate = sanitizeCompany(rawCandidate);
+  if (!candidate) return null;
+
   const baseQuality = scoreCandidate(candidate, "explicit");
+  const confidence = Math.min(0.96, baseQuality + confidenceBonus);
 
-  // A company-like phrase immediately followed by a strong corporate action
-  // verb is meaningful evidence even when the name has no legal suffix.
-  const confidence = Math.min(0.94, baseQuality + 0.14);
-
-  if (confidence < 0.78) return null;
+  if (confidence < 0.76) return null;
   return { name: candidate, confidence };
 }
+
 
 export function normalizeCompany(value) {
   return sanitizeCompany(value)
