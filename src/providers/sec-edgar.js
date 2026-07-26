@@ -8,10 +8,11 @@ import {
 
 const MATERIAL_FORMS = new Set(["8-K", "10-K", "10-Q", "6-K", "20-F"]);
 const MAX_CONCURRENCY = 2;
-const SUBMISSIONS_TIMEOUT_MS = 30000;
-const FILING_TIMEOUT_MS = 30000;
+const MAX_COMPANIES_PER_RUN = 8;
+const SUBMISSIONS_TIMEOUT_MS = 15000;
+const FILING_TIMEOUT_MS = 15000;
 const CACHE_TTL_SECONDS = 3600;
-const MAX_FILINGS_PER_COMPANY = 4;
+const MAX_FILINGS_PER_COMPANY = 2;
 
 const SIGNAL_RULES = [
   {
@@ -133,9 +134,12 @@ export const secEdgarProvider = {
       WHERE active = 1
         AND sec_cik IS NOT NULL
         AND TRIM(sec_cik) <> ''
-      ORDER BY priority DESC, COALESCE(last_success_at, '') ASC
-      LIMIT 40
-    `).all();
+      ORDER BY
+        CASE WHEN last_checked_at IS NULL THEN 0 ELSE 1 END,
+        last_checked_at ASC,
+        priority DESC
+      LIMIT ?
+    `).bind(MAX_COMPANIES_PER_RUN).all();
 
     const sources = result.results || [];
 
@@ -155,16 +159,35 @@ export const secEdgarProvider = {
       const batch = sources.slice(index, index + MAX_CONCURRENCY);
 
       const settled = await Promise.allSettled(
-        batch.map((source) => fetchCompanyFilings(source, normalizedWindow))
+        batch.map(async (source) => ({
+          source,
+          articles: await fetchCompanyFilings(source, normalizedWindow)
+        }))
       );
 
       for (const item of settled) {
         if (item.status === "fulfilled") {
-          collected.push(...item.value);
+          collected.push(...item.value.articles);
+          item.value.source.__secSuccess = true;
         } else {
           errors.push(String(item.reason?.message || item.reason));
         }
       }
+    }
+
+    if (sources.length) {
+      await env.DB.batch(
+        sources.map((source) => env.DB.prepare(`
+          UPDATE company_sources
+          SET
+            last_checked_at = CURRENT_TIMESTAMP,
+            last_success_at = CASE
+              WHEN ? = 1 THEN CURRENT_TIMESTAMP
+              ELSE last_success_at
+            END
+          WHERE id = ?
+        `).bind(source.__secSuccess ? 1 : 0, source.id))
+      ).catch((error) => console.warn("SEC rotation update failed", error));
     }
 
     return {
@@ -382,7 +405,7 @@ function normalizeFilingText(html) {
 function secHeaders() {
   return {
     accept: "application/json,text/html,application/xhtml+xml",
-    "user-agent": "Radaryum/5.1 contact@radaryum.com"
+    "user-agent": "Radaryum/5.5 contact@radaryum.com"
   };
 }
 
