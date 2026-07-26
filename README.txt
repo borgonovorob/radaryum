@@ -1,12 +1,25 @@
-Radaryum v5.8.3 — Archive source links
+Radaryum v5.8.4 — Marketing, trust and SEO
 
-Replace these files in GitHub:
-- src/engines/persistence.js
-- public/app.js
+Replace/add these files in GitHub:
+- public/index.html
+- public/styles.css
+- public/favicon.svg
+- public/robots.txt
+- public/sitemap.xml
 
-Changes:
-- Archive company cards now include up to five latest source-news links.
-- Each link includes date, signal, headline, and source domain.
-- The original article is not copied into D1; only the URL and existing event metadata are used.
-- No D1 migration is required.
-- Storage impact is negligible because the URLs already exist in the events table.
+Keep the existing file:
+- public/social-preview.png
+
+Included:
+- Primary CTA: Start tracking opportunities
+- Audience section for B2B Sales, Procurement, Business Development and Market Intelligence
+- Public-source intelligence / 30-minute update trust message
+- Clear score and RFQ disclaimer
+- canonical URL
+- Open Graph and X/Twitter large-image metadata
+- favicon
+- robots.txt
+- sitemap.xml
+- SoftwareApplication structured data
+
+No D1 migration is required.
