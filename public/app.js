@@ -13,22 +13,28 @@ document.querySelectorAll("[data-view]").forEach(btn=>btn.addEventListener("clic
 
 q("#refresh").addEventListener("click",async()=>{
   if(refreshing)return;
-
   refreshing=true;
-  forceNextRefresh=true;
-
   const button=q("#refresh");
   button.disabled=true;
   button.textContent="Refreshing…";
 
   try{
-    await load();
-
+    const before=await load(false);
+    const baseline=before?.snapshotId||before?.snapshotCreatedAt||before?.generatedAt||"";
+    forceNextRefresh=true;
+    await load(false);
     button.textContent="Collecting signals…";
-    await new Promise(resolve=>setTimeout(resolve,15000));
 
-    button.textContent="Loading results…";
-    await load();
+    let changed=false;
+    for(let attempt=0;attempt<15;attempt+=1){
+      await new Promise(resolve=>setTimeout(resolve,5000));
+      button.textContent=`Collecting signals… ${Math.min(75,(attempt+1)*5)}s`;
+      const current=await load(false);
+      const marker=current?.snapshotId||current?.snapshotCreatedAt||current?.generatedAt||"";
+      if(marker&&marker!==baseline){changed=true;break;}
+    }
+    button.textContent=changed?"Updated":"Refresh queued";
+    await new Promise(resolve=>setTimeout(resolve,1200));
   }finally{
     refreshing=false;
     button.disabled=false;
@@ -36,11 +42,11 @@ q("#refresh").addEventListener("click",async()=>{
   }
 });
 
-async function load(){
+async function load(showLoading=true){
   controller?.abort();controller=new AbortController();
   q("#refresh").disabled=true;q("#error").hidden=true;
   q("#status").textContent=view==="archive"?"Reading persistent archive":"Reading latest ready snapshot";
-  q("#list").innerHTML=`<div class="loading">${view==="archive"?"Reading accumulated opportunity history…":"Loading industrial signals…"}</div>`;
+  if(showLoading)q("#list").innerHTML=`<div class="loading">${view==="archive"?"Reading accumulated opportunity history…":"Loading industrial signals…"}</div>`;
 
   const p=new URLSearchParams({minScore:q("#minScore").value});
   if(q("#country").value)p.set("country",q("#country").value);
@@ -71,6 +77,7 @@ async function load(){
     }
     updateMetrics(items,d.generatedAt);
     q("#status").textContent=`Live · ${items.length} ${view}`;
+    return d;
   }catch(e){
     if(e.name==="AbortError")return;
     q("#error").hidden=false;q("#error").textContent=`${e.message} Please retry shortly.`;

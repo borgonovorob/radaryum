@@ -19,7 +19,7 @@
     ]
   },
   "vars": {
-    "RADARYUM_VERSION": "5.7.0"
+    "RADARYUM_VERSION": "5.8.0"
   },
   "d1_databases": [
     {

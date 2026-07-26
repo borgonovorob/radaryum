@@ -5,97 +5,69 @@ import { classifySignal } from "./classification.js";
 import { correlateCompanies } from "./correlation.js";
 import { deduplicateArticles } from "./deduplication.js";
 import { extractCompany } from "./entity.js";
+import { readActiveCompanyCatalog, readRecentEvents } from "./persistence.js";
 import { scoreEvent } from "./scoring.js";
 import { clean, parseGdeltDate, safeDomain, stableId } from "../utils/text.js";
 
 export async function runPipeline(window, env) {
   const started = Date.now();
-  const collected = await collectSources(window, env);
-  const enriched = deduplicateArticles(collected.articles).map(enrichEvent);
+  const [collected, configuredCompanies, storedEvents] = await Promise.all([
+    collectSources(window, env),
+    readActiveCompanyCatalog(env).catch(() => []),
+    readRecentEvents(env, window, 700).catch(() => [])
+  ]);
 
-  const events = enriched
-    .filter((event) => event.score >= 35)
-    .sort((a, b) => b.score - a.score || Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
-    .slice(0, 180);
+  const freshEvents = deduplicateArticles(collected.articles)
+    .map(article => enrichEvent(article, configuredCompanies))
+    .filter(event => event.score >= 35);
+
+  const events = mergeEvents(storedEvents, freshEvents)
+    .filter(event => insideWindow(event.publishedAt, window))
+    .sort((a,b) => b.score-a.score || Date.parse(b.publishedAt)-Date.parse(a.publishedAt))
+    .slice(0, 600);
 
   const companies = correlateCompanies(events);
-
   return {
     generatedAt: new Date().toISOString(),
-    elapsedMs: Date.now() - started,
+    elapsedMs: Date.now()-started,
     provider: "Radaryum multi-provider collector",
-    methodology: "Background multi-source collection, deterministic classification, entity extraction, deduplication, event scoring and company-level correlation.",
+    methodology: "Accumulated D1 archive plus background multi-source collection, deterministic classification, dynamic entity extraction, deduplication, scoring and company correlation.",
     caveat: "Scores indicate relevance for commercial review, not verified purchase intent or a confirmed RFQ.",
     partial: collected.collectors.failed > 0 || collected.collectors.partial > 0,
     collectors: collected.collectors,
-    stats: {
-      events: events.length,
-      companies: companies.length,
-      multiSignalCompanies: companies.filter((company) => company.signalCount >= 2).length
-    },
-    events,
-    companies
+    archiveMerge: { storedEvents: storedEvents.length, freshEvents: freshEvents.length, mergedEvents: events.length },
+    stats: { events:events.length, companies:companies.length, multiSignalCompanies:companies.filter(c=>c.signalCount>=2).length },
+    events, companies
   };
 }
 
-function enrichEvent(article) {
-  const title = clean(article.title || "Untitled source");
-  const domain = clean(article.domain || safeDomain(article.url));
-  const combined = `${title} ${domain}`;
-  const signal = classifySignal(combined, article.requestedSignal);
-  const country = detectCountry(combined);
-  const publishedAt = parseGdeltDate(article.seendate) || new Date().toISOString();
-  const entity = article.sourceCompany
-    ? { name: article.sourceCompany, confidence: 0.99 }
-    : extractCompany(title);
+function mergeEvents(stored, fresh) {
+  const map = new Map();
+  for (const event of stored || []) if (event?.id) map.set(event.id, event);
+  for (const event of fresh || []) if (event?.id) map.set(event.id, event);
+  return [...map.values()];
+}
 
-  const scoring = scoreEvent({
-    title,
-    signal,
-    country,
-    publishedAt,
-    company: entity.name
-  });
+function insideWindow(value, window) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  const hours = window === "24h" ? 24 : window === "3d" ? 72 : 168;
+  return date >= new Date(Date.now() - hours*3600000);
+}
 
-  if (article.provider === "SEC EDGAR") {
-    if (article.secRelevanceScore) {
-      scoring.reasons.unshift(`SEC filing relevance score: ${article.secRelevanceScore}.`);
-    }
-    if (article.secMatchedTerms?.length) {
-      scoring.reasons.unshift(`SEC evidence matched: ${article.secMatchedTerms.slice(0, 4).join(", ")}.`);
-    }
+function enrichEvent(article, configuredCompanies) {
+  const title=clean(article.title||"Untitled source");
+  const domain=clean(article.domain||safeDomain(article.url));
+  const combined=`${title} ${domain}`;
+  const signal=classifySignal(combined,article.requestedSignal);
+  const country=detectCountry(combined);
+  const publishedAt=parseGdeltDate(article.seendate)||new Date().toISOString();
+  const entity=article.sourceCompany ? {name:article.sourceCompany,confidence:0.99} : extractCompany(title,configuredCompanies);
+  const scoring=scoreEvent({title,signal,country,publishedAt,company:entity.name});
+  if(article.provider==="SEC EDGAR"){
+    if(article.secRelevanceScore) scoring.reasons.unshift(`SEC filing relevance score: ${article.secRelevanceScore}.`);
+    if(article.secMatchedTerms?.length) scoring.reasons.unshift(`SEC evidence matched: ${article.secMatchedTerms.slice(0,4).join(", ")}.`);
   }
-
-  return {
-    id: stableId(article.url),
-    title,
-    url: article.url,
-    domain,
-    provider: article.provider,
-    publishedAt,
-    signal,
-    signalLabel: signalLabel(signal),
-    country,
-    company: entity.name,
-    companyConfidence: entity.confidence,
-    score: scoring.score,
-    confidence: scoring.score >= 82 ? "High" : scoring.score >= 67 ? "Medium" : "Review",
-    reasons: scoring.reasons,
-    suggestedAction: suggestedAction(signal),
-    sourceLanguage: article.language || null,
-    sourceCountry: article.sourcecountry || null,
-    secForm: article.secForm || null,
-    secRelevanceScore: article.secRelevanceScore || null,
-    secMatchedTerms: article.secMatchedTerms || [],
-    secEvidenceSnippet: article.secEvidenceSnippet || null
-  };
+  return { id:stableId(article.url), title, url:article.url, domain, provider:article.provider, publishedAt, signal, signalLabel:signalLabel(signal), country, company:entity.name, companyConfidence:entity.confidence, score:scoring.score, confidence:scoring.score>=82?"High":scoring.score>=67?"Medium":"Review", reasons:scoring.reasons, suggestedAction:suggestedAction(signal), sourceLanguage:article.language||null, sourceCountry:article.sourcecountry||null, secForm:article.secForm||null, secRelevanceScore:article.secRelevanceScore||null, secMatchedTerms:article.secMatchedTerms||[], secEvidenceSnippet:article.secEvidenceSnippet||null };
 }
-
-function suggestedAction(signal) {
-  return {
-    expansion: "Verify the investment and identify the plant, program and local sourcing leadership.",
-    procurement: "Verify the role or sourcing initiative and identify the responsible category or commodity manager.",
-    product: "Map the product architecture, likely components and expected sourcing or industrialization window.",
-    supply: "Check whether the event creates dual-sourcing, localization or replacement-supplier demand."
-  }[signal] || "Review the original source and verify the commercial relevance.";
-}
+function suggestedAction(signal){return {expansion:"Verify the investment and identify the plant, program and local sourcing leadership.",procurement:"Verify the role or sourcing initiative and identify the responsible category or commodity manager.",product:"Map the product architecture, likely components and expected sourcing or industrialization window.",supply:"Check whether the event creates dual-sourcing, localization or replacement-supplier demand."}[signal]||"Review the original source and verify the commercial relevance.";}

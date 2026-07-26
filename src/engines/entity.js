@@ -130,13 +130,16 @@ const COMPANY_VERBS = [
   "adds", "increases", "relocates", "awards", "qualifies"
 ];
 
-export function extractCompany(title) {
+export function extractCompany(title, dynamicCompanies = []) {
   const original = clean(title);
   const headline = original.replace(/\s[-–—|:]\s.*$/, "").trim();
 
   if (!headline) return { name: null, confidence: 0 };
   if (BAD_PHRASES.some((pattern) => pattern.test(original))) return { name: null, confidence: 0 };
   if (startsWithBadWord(headline)) return { name: null, confidence: 0 };
+
+  const configured = matchConfiguredCompany(original, dynamicCompanies);
+  if (configured) return { name: configured, confidence: 0.995 };
 
   const known = matchKnownCompany(original);
   if (known) return { name: known, confidence: 0.99 };
@@ -177,6 +180,23 @@ export function normalizeCompany(value) {
 function startsWithBadWord(text) {
   const first = text.split(/\s+/)[0]?.replace(/[^\p{L}\p{N}&.'-]/gu, "").toLowerCase();
   return BAD_START_WORDS.has(first);
+}
+
+function matchConfiguredCompany(text, companies) {
+  for (const company of companies || []) {
+    const canonical = clean(company?.company || company?.name || company);
+    if (!canonical || canonical.length < 2) continue;
+
+    const candidates = [canonical, ...(Array.isArray(company?.aliases) ? company.aliases : [])];
+    for (const alias of candidates) {
+      const value = clean(alias);
+      if (!value || value.length < 2) continue;
+      const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const pattern = new RegExp(`(^|[^A-Za-z0-9])${escaped}(?=$|[^A-Za-z0-9])`, "i");
+      if (pattern.test(text)) return canonical;
+    }
+  }
+  return null;
 }
 
 function matchKnownCompany(text) {

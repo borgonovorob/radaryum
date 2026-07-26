@@ -31,8 +31,8 @@ export default {
         return apiJson({
           ok: true,
           service: "radaryum",
-          version: "5.0.0",
-          architecture: "background-collectors-persistent-snapshots",
+          version: env.RADARYUM_VERSION || "5.8.0",
+          architecture: "accumulated-d1-canonical-window",
           databaseConfigured: hasDatabase(env),
           time: new Date().toISOString()
         });
@@ -245,7 +245,7 @@ function snapshotResponse(payload) {
 }
 
 function snapshotKey(window) {
-  return new Request(`https://radaryum.internal/v5/snapshot/${window}`);
+  return new Request(`https://radaryum.internal/v5_8/snapshot/${window}`);
 }
 
 function emptySnapshot(window, reason) {

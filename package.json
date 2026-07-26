@@ -1,8 +1,8 @@
 {
   "name": "radaryum",
-  "version": "4.0.0",
+  "version": "5.8.0",
   "private": true,
-  "description": "Persistent industrial opportunity intelligence engine on Cloudflare Workers and D1",
+  "description": "Accumulated industrial opportunity intelligence engine on Cloudflare Workers and D1",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
