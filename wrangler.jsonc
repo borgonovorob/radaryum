@@ -3,9 +3,11 @@
   "name": "radaryum",
   "main": "src/index.js",
   "compatibility_date": "2026-07-25",
+
   "observability": {
     "enabled": true
   },
+
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
@@ -13,12 +15,22 @@
       "/api/*"
     ]
   },
+
   "triggers": {
     "crons": [
       "17 */3 * * *"
     ]
   },
+
   "vars": {
     "RADARYUM_VERSION": "4.0.0"
-  }
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "radaryum-db",
+      "database_id": "4dbfea16-5357-4647-ab71-802cc9aef9c2"
+    }
+  ]
 }
