@@ -1,79 +1,45 @@
 import { SIGNAL_GROUPS } from "../config/signals.js";
 
-const REAL_FALLBACK_QUERIES = [
-  { id: "expansion", query: '"factory expansion" OR "new factory" OR "new plant" OR "manufacturing investment" OR "production capacity"' },
-  { id: "procurement", query: '"procurement manager" OR "strategic sourcing" OR "commodity manager" OR "supplier development" OR "supplier qualification"' },
-  { id: "product", query: '"new product" OR "product launch" OR "starts production" OR "production program"' },
-  { id: "supply", query: '"supply chain" OR "supplier shortage" OR "dual sourcing" OR "supplier qualification"' }
+const FAST_GDELT_QUERIES = [
+  { id: "expansion", query: '"factory expansion" OR "new factory" OR "new plant" OR "manufacturing investment"' },
+  { id: "procurement", query: '"strategic sourcing" OR "supplier development" OR "procurement manager"' },
+  { id: "product", query: '"starts production" OR "new product" OR "production program"' },
+  { id: "supply", query: '"supplier shortage" OR "dual sourcing" OR "supplier qualification"' }
 ];
 
-const GOOGLE_NEWS_QUERIES = [
-  { id: "expansion", query: 'manufacturing investment OR factory expansion OR new plant OR production capacity' },
-  { id: "procurement", query: 'procurement manager OR strategic sourcing OR supplier development manufacturing' },
-  { id: "product", query: 'manufacturing new product launch OR starts production OR production program' },
-  { id: "supply", query: 'manufacturing supply chain OR supplier shortage OR dual sourcing' }
+const FAST_GOOGLE_NEWS_QUERIES = [
+  { id: "expansion", query: 'manufacturing investment OR factory expansion OR new plant' },
+  { id: "procurement", query: 'strategic sourcing OR supplier development manufacturing' },
+  { id: "product", query: 'manufacturing new product launch OR starts production' },
+  { id: "supply", query: 'manufacturing supply chain OR supplier shortage' }
 ];
 
-const FETCH_TIMEOUT_MS = 6500;
-const COLLECTOR_BUDGET_MS = 17000;
+const FETCH_TIMEOUT_MS = 3500;
+const MAX_PER_QUERY = 35;
 
 export async function fetchGdelt(window) {
   const normalizedWindow = normalizeTimespan(window);
-  const started = Date.now();
 
-  const gdeltPrimary = await withBudget(
-    collectGdelt(SIGNAL_GROUPS, normalizedWindow, "primary", 80),
-    COLLECTOR_BUDGET_MS,
-    { articles: [], errors: ["GDELT primary budget expired"] }
-  );
-
-  if (gdeltPrimary.articles.length > 0) {
-    console.log(`GDELT primary returned ${gdeltPrimary.articles.length} real articles.`);
-    return gdeltPrimary.articles.slice(0, 160);
-  }
-
-  const remainingAfterPrimary = Math.max(4500, COLLECTOR_BUDGET_MS - (Date.now() - started));
-
-  const [gdeltFallback, googleNews] = await Promise.allSettled([
-    withBudget(
-      collectGdelt(REAL_FALLBACK_QUERIES, normalizedWindow, "real-fallback", 70),
-      Math.min(remainingAfterPrimary, 9000),
-      { articles: [], errors: ["GDELT fallback budget expired"] }
-    ),
-    withBudget(
-      collectGoogleNews(normalizedWindow),
-      Math.min(remainingAfterPrimary, 9000),
-      { articles: [], errors: ["Google News budget expired"] }
-    )
+  // Fast production mode: query fewer sources, with short timeouts, and return partial real data.
+  const [gdelt, google] = await Promise.allSettled([
+    collectGdelt(FAST_GDELT_QUERIES, normalizedWindow, "fast", MAX_PER_QUERY),
+    collectGoogleNews(normalizedWindow)
   ]);
 
   const articles = [
-    ...valueOrEmpty(gdeltFallback).articles,
-    ...valueOrEmpty(googleNews).articles
+    ...valueOrEmpty(gdelt).articles,
+    ...valueOrEmpty(google).articles
   ];
 
-  const deduped = dedupeArticles(articles).slice(0, 180);
+  const deduped = dedupeArticles(articles).slice(0, 120);
 
   if (deduped.length > 0) {
-    console.log(`Real collectors returned ${deduped.length} articles within budget.`);
+    console.log(`Fast real collectors returned ${deduped.length} articles.`);
     return deduped;
   }
 
-  console.warn("Real collectors returned zero within budget. No demo fallback used.");
+  console.warn("Fast real collectors returned zero articles. No demo fallback used.");
   return [];
-}
-
-async function withBudget(promise, ms, fallback) {
-  let timeoutId;
-  const timeout = new Promise((resolve) => {
-    timeoutId = setTimeout(() => resolve(fallback), ms);
-  });
-
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    clearTimeout(timeoutId);
-  }
 }
 
 function valueOrEmpty(result) {
@@ -109,7 +75,7 @@ async function fetchGdeltGroup(group, window, mode, maxRecords) {
   const response = await fetchWithTimeout(endpoint.toString(), {
     headers: {
       accept: "application/json",
-      "user-agent": "Radaryum/4.3b-timeout-safe-real-collectors (+https://radaryum.com)"
+      "user-agent": "Radaryum/4.3c-fast-live-json-safe (+https://radaryum.com)"
     },
     cf: { cacheTtl: 30, cacheEverything: true }
   }, FETCH_TIMEOUT_MS);
@@ -117,14 +83,14 @@ async function fetchGdeltGroup(group, window, mode, maxRecords) {
   const text = await response.text();
 
   if (!response.ok) {
-    throw new Error(`GDELT ${group.id} ${mode} HTTP ${response.status}: ${text.slice(0, 180)}`);
+    throw new Error(`GDELT ${group.id} ${mode} HTTP ${response.status}: ${text.slice(0, 120)}`);
   }
 
   let data;
   try {
     data = JSON.parse(text);
   } catch {
-    throw new Error(`GDELT ${group.id} ${mode} non-JSON: ${text.slice(0, 180)}`);
+    throw new Error(`GDELT ${group.id} ${mode} non-JSON`);
   }
 
   const articles = Array.isArray(data.articles) ? data.articles : [];
@@ -140,7 +106,7 @@ async function fetchGdeltGroup(group, window, mode, maxRecords) {
 
 async function collectGoogleNews(window) {
   const settled = await Promise.allSettled(
-    GOOGLE_NEWS_QUERIES.map((group) => fetchGoogleNewsGroup(group, window))
+    FAST_GOOGLE_NEWS_QUERIES.map((group) => fetchGoogleNewsGroup(group, window))
   );
 
   const articles = [];
@@ -151,7 +117,7 @@ async function collectGoogleNews(window) {
     else errors.push(String(result.reason?.message || result.reason));
   }
 
-  return { articles: dedupeArticles(articles).slice(0, 160), errors };
+  return { articles: dedupeArticles(articles).slice(0, 100), errors };
 }
 
 async function fetchGoogleNewsGroup(group, window) {
@@ -165,7 +131,7 @@ async function fetchGoogleNewsGroup(group, window) {
   const response = await fetchWithTimeout(endpoint.toString(), {
     headers: {
       accept: "application/rss+xml, application/xml, text/xml",
-      "user-agent": "Radaryum/4.3b-timeout-safe-real-collectors (+https://radaryum.com)"
+      "user-agent": "Radaryum/4.3c-fast-live-json-safe (+https://radaryum.com)"
     },
     cf: { cacheTtl: 60, cacheEverything: true }
   }, FETCH_TIMEOUT_MS);
@@ -173,7 +139,7 @@ async function fetchGoogleNewsGroup(group, window) {
   const xml = await response.text();
 
   if (!response.ok) {
-    throw new Error(`Google News RSS ${group.id} HTTP ${response.status}: ${xml.slice(0, 180)}`);
+    throw new Error(`Google News RSS ${group.id} HTTP ${response.status}: ${xml.slice(0, 120)}`);
   }
 
   return parseRss(xml, group.id);
@@ -181,7 +147,7 @@ async function fetchGoogleNewsGroup(group, window) {
 
 async function fetchWithTimeout(url, options, ms) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort("timeout"), ms);
+  const timeoutId = setTimeout(() => controller.abort(), ms);
 
   try {
     return await fetch(url, { ...options, signal: controller.signal });
