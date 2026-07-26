@@ -30,8 +30,10 @@ export async function persistPipeline(env, payload, window = "3d") {
         INSERT INTO events (
           id, title, url, domain, provider, published_at, signal, signal_label,
           country, company, company_confidence, score, confidence, reasons_json,
-          suggested_action, source_language, source_country, first_seen_at, last_seen_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          suggested_action, source_language, source_country,
+          sec_form, sec_relevance_score, sec_matched_terms_json, sec_evidence_snippet,
+          first_seen_at, last_seen_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           title = excluded.title,
           url = excluded.url,
@@ -49,13 +51,20 @@ export async function persistPipeline(env, payload, window = "3d") {
           suggested_action = excluded.suggested_action,
           source_language = excluded.source_language,
           source_country = excluded.source_country,
+          sec_form = excluded.sec_form,
+          sec_relevance_score = excluded.sec_relevance_score,
+          sec_matched_terms_json = excluded.sec_matched_terms_json,
+          sec_evidence_snippet = excluded.sec_evidence_snippet,
           last_seen_at = excluded.last_seen_at
       `).bind(
         event.id, event.title, event.url, event.domain, event.provider || payload.provider,
         event.publishedAt, event.signal, event.signalLabel, event.country, event.company,
         event.companyConfidence || 0, event.score, event.confidence,
         JSON.stringify(event.reasons || []), event.suggestedAction || null,
-        event.sourceLanguage || null, event.sourceCountry || null, now, now
+        event.sourceLanguage || null, event.sourceCountry || null,
+        event.secForm || null, event.secRelevanceScore || null,
+        JSON.stringify(event.secMatchedTerms || []), event.secEvidenceSnippet || null,
+        now, now
       )
     );
   }
@@ -298,6 +307,10 @@ function parseEvent(row) {
     suggestedAction: row.suggested_action,
     sourceLanguage: row.source_language,
     sourceCountry: row.source_country,
+    secForm: row.sec_form || null,
+    secRelevanceScore: row.sec_relevance_score || null,
+    secMatchedTerms: safeJson(row.sec_matched_terms_json, []),
+    secEvidenceSnippet: row.sec_evidence_snippet || null,
     firstSeenAt: row.first_seen_at,
     lastSeenAt: row.last_seen_at,
     archived: true

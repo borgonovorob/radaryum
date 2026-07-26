@@ -57,6 +57,15 @@ function enrichEvent(article) {
     company: entity.name
   });
 
+  if (article.provider === "SEC EDGAR") {
+    if (article.secRelevanceScore) {
+      scoring.reasons.unshift(`SEC filing relevance score: ${article.secRelevanceScore}.`);
+    }
+    if (article.secMatchedTerms?.length) {
+      scoring.reasons.unshift(`SEC evidence matched: ${article.secMatchedTerms.slice(0, 4).join(", ")}.`);
+    }
+  }
+
   return {
     id: stableId(article.url),
     title,
@@ -74,7 +83,11 @@ function enrichEvent(article) {
     reasons: scoring.reasons,
     suggestedAction: suggestedAction(signal),
     sourceLanguage: article.language || null,
-    sourceCountry: article.sourcecountry || null
+    sourceCountry: article.sourcecountry || null,
+    secForm: article.secForm || null,
+    secRelevanceScore: article.secRelevanceScore || null,
+    secMatchedTerms: article.secMatchedTerms || [],
+    secEvidenceSnippet: article.secEvidenceSnippet || null
   };
 }
 

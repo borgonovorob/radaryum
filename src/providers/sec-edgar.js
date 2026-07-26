@@ -281,8 +281,30 @@ async function analyzeFiling(source, filing) {
     sourceCompany: source.company,
     secForm: filing.form,
     secRelevanceScore: relevance.score,
-    secMatchedTerms: relevance.matchedTerms
+    secMatchedTerms: relevance.matchedTerms,
+    secEvidenceSnippet: evidenceSnippet(text, relevance.matchedTerms)
   };
+}
+
+
+function evidenceSnippet(text, matchedTerms) {
+  if (!text || !matchedTerms?.length) return null;
+
+  const strongest = [...matchedTerms]
+    .sort((a, b) => b.length - a.length)
+    .find((term) => text.includes(term));
+
+  if (!strongest) return null;
+
+  const index = text.indexOf(strongest);
+  const start = Math.max(0, index - 180);
+  const end = Math.min(text.length, index + strongest.length + 260);
+
+  return text
+    .slice(start, end)
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 520);
 }
 
 function scoreFiling(text) {
