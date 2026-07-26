@@ -7,17 +7,19 @@ import {
   readStats,
   saveFeedback
 } from "./engines/persistence.js";
-import { failure, json } from "./utils/http.js";
+import { json } from "./utils/http.js";
 import { clamp } from "./utils/text.js";
 
 const CACHE_KEY = new Request("https://radaryum.internal/api/correlated?window=3d&engine=v4.1g");
 
 export default {
   async fetch(request, env, ctx) {
-    const url = new URL(request.url);
+    try {
+      const url = new URL(request.url);
 
     if (url.pathname === "/api/companies") return handleCompanies(request, env, ctx);
     if (url.pathname === "/api/opportunities") return handleEvents(request, env, ctx);
+    if (url.pathname === "/api/events") return handleEvents(request, env, ctx);
     if (url.pathname === "/api/archive") return handleArchive(request, env);
     if (url.pathname === "/api/stats") return handleStats(env);
     if (url.pathname === "/api/feedback" && request.method === "POST") {
@@ -34,7 +36,21 @@ export default {
       }, 200, 60);
     }
 
+    if (url.pathname.startsWith("/api/")) {
+      return noStoreJson({
+        error: "API route not found",
+        path: url.pathname,
+        ok: false
+      }, 404);
+    }
+
     return env.ASSETS.fetch(request);
+    } catch (error) {
+      return noStoreJson({
+        error: String(error?.message || error),
+        ok: false
+      }, 500);
+    }
   },
 
   async scheduled(controller, env, ctx) {
@@ -62,7 +78,7 @@ async function handleCompanies(request, env, ctx) {
       filters: { window, country, minScore }
     }, 200, 300);
   } catch (error) {
-    return failure(error);
+    return noStoreJson({ error: String(error?.message || error), ok: false }, 500);
   }
 }
 
@@ -88,7 +104,7 @@ async function handleEvents(request, env, ctx) {
       filters: { window, signal, country, minScore }
     }, 200, 300);
   } catch (error) {
-    return failure(error);
+    return noStoreJson({ error: String(error?.message || error), ok: false }, 500);
   }
 }
 
@@ -105,7 +121,7 @@ async function handleArchive(request, env) {
       ...archive
     }, 200, 120);
   } catch (error) {
-    return failure(error);
+    return noStoreJson({ error: String(error?.message || error), ok: false }, 500);
   }
 }
 
@@ -116,7 +132,7 @@ async function handleStats(env) {
       ...(await readStats(env))
     }, 200, 60);
   } catch (error) {
-    return failure(error);
+    return noStoreJson({ error: String(error?.message || error), ok: false }, 500);
   }
 }
 
@@ -150,7 +166,7 @@ async function refreshAndPersist(env) {
     const payload = await runPipeline("3d");
     await Promise.all([
       caches.default.put(CACHE_KEY, json(payload, 200, 900)),
-      persistPipeline(env, payload, "3d")
+      persistPipeline(env.DB, payload)
     ]);
   } catch (error) {
     console.error("Scheduled refresh failed", error);
